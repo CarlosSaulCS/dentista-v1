@@ -1,0 +1,9 @@
+pub mod appointments;
+pub mod auth;
+pub mod backups;
+pub mod clinical;
+pub mod dashboard;
+pub mod odontogram;
+pub mod office;
+pub mod patients;
+pub mod reports;
