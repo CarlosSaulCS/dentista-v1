@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::errors::AppResult;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -116,11 +116,18 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("report export columns exist");
+        let license_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_license'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("license table exists");
 
         assert!(permissions_count >= 10);
         assert_eq!(patients_table, 1);
         assert_eq!(related_file_columns, 2);
         assert_eq!(alert_state_table, 1);
         assert_eq!(report_export_columns, 2);
+        assert_eq!(license_table, 1);
     }
 }

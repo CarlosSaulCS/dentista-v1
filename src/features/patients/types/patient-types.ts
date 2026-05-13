@@ -6,9 +6,16 @@ export type PatientSummary = {
   phone?: string | null;
   whatsapp?: string | null;
   email?: string | null;
+  address?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  occupation?: string | null;
   allergies?: string | null;
   systemicDiseases?: string | null;
   currentMedications?: string | null;
+  relevantHistory?: string | null;
+  habits?: string | null;
+  generalNotes?: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;

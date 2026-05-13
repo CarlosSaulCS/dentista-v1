@@ -208,6 +208,28 @@ pub async fn create_inventory_item(
 }
 
 #[tauri::command]
+pub async fn update_inventory_item(
+    state: State<'_, AppState>,
+    session_token: String,
+    input: UpdateInventoryItemInput,
+) -> Result<InventoryItemSummary, String> {
+    office_service::update_inventory_item(&state.db, &session_token, input)
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
+pub async fn soft_delete_inventory_item(
+    state: State<'_, AppState>,
+    session_token: String,
+    inventory_item_id: String,
+) -> Result<InventoryItemSummary, String> {
+    office_service::soft_delete_inventory_item(&state.db, &session_token, &inventory_item_id)
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
 pub async fn create_inventory_movement(
     state: State<'_, AppState>,
     session_token: String,
@@ -272,6 +294,28 @@ pub async fn list_patient_files(
 }
 
 #[tauri::command]
+pub async fn open_patient_file(
+    state: State<'_, AppState>,
+    session_token: String,
+    file_id: String,
+) -> Result<(), String> {
+    office_service::open_patient_file(&state, &session_token, &file_id)
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
+pub async fn open_external_url(
+    state: State<'_, AppState>,
+    session_token: String,
+    url: String,
+) -> Result<(), String> {
+    office_service::open_external_url(&state.db, &session_token, &url)
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
 pub async fn list_consent_templates(
     state: State<'_, AppState>,
     session_token: String,
@@ -320,6 +364,17 @@ pub async fn list_message_templates(
     session_token: String,
 ) -> Result<Vec<MessageTemplateSummary>, String> {
     office_service::list_message_templates(&state.db, &session_token)
+        .await
+        .map_err(command_error)
+}
+
+#[tauri::command]
+pub async fn global_search(
+    state: State<'_, AppState>,
+    session_token: String,
+    term: String,
+) -> Result<Vec<GlobalSearchResult>, String> {
+    office_service::global_search(&state.db, &session_token, &term)
         .await
         .map_err(command_error)
 }

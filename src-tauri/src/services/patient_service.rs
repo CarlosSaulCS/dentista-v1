@@ -2,7 +2,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::errors::{AppError, AppResult};
-use crate::models::{CreatePatientInput, ListPatientsInput, PatientSummary};
+use crate::models::{CreatePatientInput, ListPatientsInput, PatientSummary, UpdatePatientInput};
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::validate_session;
 use crate::utils::{new_id, normalize_search, now_utc};
@@ -86,8 +86,10 @@ pub async fn list_patients(
 
     let patients = sqlx::query_as::<_, PatientSummary>(
         r#"
-        SELECT id, full_name, birth_date, sex, phone, whatsapp, email, allergies,
-               systemic_diseases, current_medications, status, created_at, updated_at
+        SELECT id, full_name, birth_date, sex, phone, whatsapp, email, address,
+               emergency_contact_name, emergency_contact_phone, occupation, allergies,
+               systemic_diseases, current_medications, relevant_history, habits,
+               general_notes, status, created_at, updated_at
         FROM patients
         WHERE clinic_id = ?
           AND deleted_at IS NULL
@@ -113,6 +115,125 @@ pub async fn list_patients(
     Ok(patients)
 }
 
+pub async fn update_patient(
+    db: &SqlitePool,
+    session_token: &str,
+    input: UpdatePatientInput,
+) -> AppResult<PatientSummary> {
+    let ctx = validate_session(db, session_token, Some("patients.edit")).await?;
+    if input.id.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Selecciona un paciente para editar".to_string(),
+        ));
+    }
+    if input.full_name.trim().is_empty() {
+        return Err(AppError::Validation(
+            "El nombre completo del paciente es obligatorio".to_string(),
+        ));
+    }
+
+    let now = now_utc();
+    let result = sqlx::query(
+        r#"
+        UPDATE patients
+        SET full_name = ?, birth_date = ?, sex = ?, phone = ?, whatsapp = ?, email = ?,
+            address = ?, emergency_contact_name = ?, emergency_contact_phone = ?,
+            occupation = ?, allergies = ?, systemic_diseases = ?, current_medications = ?,
+            relevant_history = ?, habits = ?, general_notes = ?, status = ?, updated_at = ?
+        WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
+        "#,
+    )
+    .bind(input.full_name.trim())
+    .bind(
+        input
+            .birth_date
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )
+    .bind(input.sex.as_deref().filter(|value| !value.is_empty()))
+    .bind(input.phone.as_deref().map(str::trim))
+    .bind(input.whatsapp.as_deref().map(str::trim))
+    .bind(input.email.as_deref().map(str::trim))
+    .bind(input.address.as_deref().map(str::trim))
+    .bind(input.emergency_contact_name.as_deref().map(str::trim))
+    .bind(input.emergency_contact_phone.as_deref().map(str::trim))
+    .bind(input.occupation.as_deref().map(str::trim))
+    .bind(input.allergies.as_deref().map(str::trim))
+    .bind(input.systemic_diseases.as_deref().map(str::trim))
+    .bind(input.current_medications.as_deref().map(str::trim))
+    .bind(input.relevant_history.as_deref().map(str::trim))
+    .bind(input.habits.as_deref().map(str::trim))
+    .bind(input.general_notes.as_deref().map(str::trim))
+    .bind(input.status.trim())
+    .bind(&now)
+    .bind(&ctx.clinic_id)
+    .bind(input.id.trim())
+    .execute(db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation("Paciente no encontrado".to_string()));
+    }
+
+    log_action(
+        db,
+        Some(&ctx.clinic_id),
+        Some(&ctx.user_id),
+        "patients.update",
+        "patients",
+        Some(input.id.trim()),
+        "info",
+        Some(json!({ "fullName": input.full_name, "status": input.status })),
+    )
+    .await?;
+
+    get_patient_by_id(db, &ctx.clinic_id, input.id.trim()).await
+}
+
+pub async fn soft_delete_patient(
+    db: &SqlitePool,
+    session_token: &str,
+    patient_id: &str,
+) -> AppResult<PatientSummary> {
+    let ctx = validate_session(db, session_token, Some("patients.delete")).await?;
+    if patient_id.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Selecciona un paciente para dar de baja".to_string(),
+        ));
+    }
+
+    let patient = get_patient_by_id(db, &ctx.clinic_id, patient_id).await?;
+    let now = now_utc();
+    sqlx::query(
+        r#"
+        UPDATE patients
+        SET status = 'inactive', deleted_at = ?, deleted_by_user_id = ?, updated_at = ?
+        WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
+        "#,
+    )
+    .bind(&now)
+    .bind(&ctx.user_id)
+    .bind(&now)
+    .bind(&ctx.clinic_id)
+    .bind(patient_id.trim())
+    .execute(db)
+    .await?;
+
+    log_action(
+        db,
+        Some(&ctx.clinic_id),
+        Some(&ctx.user_id),
+        "patients.soft_delete",
+        "patients",
+        Some(patient_id.trim()),
+        "warning",
+        Some(json!({ "fullName": patient.full_name })),
+    )
+    .await?;
+
+    Ok(patient)
+}
+
 pub async fn get_patient(
     db: &SqlitePool,
     session_token: &str,
@@ -129,8 +250,10 @@ async fn get_patient_by_id(
 ) -> AppResult<PatientSummary> {
     sqlx::query_as::<_, PatientSummary>(
         r#"
-        SELECT id, full_name, birth_date, sex, phone, whatsapp, email, allergies,
-               systemic_diseases, current_medications, status, created_at, updated_at
+        SELECT id, full_name, birth_date, sex, phone, whatsapp, email, address,
+               emergency_contact_name, emergency_contact_phone, occupation, allergies,
+               systemic_diseases, current_medications, relevant_history, habits,
+               general_notes, status, created_at, updated_at
         FROM patients
         WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
         "#,

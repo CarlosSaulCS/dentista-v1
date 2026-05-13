@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LockKeyhole } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -9,10 +10,12 @@ import { Label } from "@/components/ui/label";
 import { loginSchema, type LoginFormValues } from "@/features/auth/schemas/auth-schemas";
 import { login } from "@/features/auth/services/auth-service";
 import { useAuthStore } from "@/store/auth-store";
+import type { BootstrapStatus, LicenseStatus } from "@/types/shared";
 
-export function LoginPage() {
+export function LoginPage({ license }: { license?: LicenseStatus }) {
   const setSession = useAuthStore((state) => state.setSession);
   const locked = useAuthStore((state) => state.locked);
+  const queryClient = useQueryClient();
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { username: "", password: "" },
@@ -21,6 +24,9 @@ export function LoginPage() {
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       const session = await login(values);
+      queryClient.setQueryData<BootstrapStatus>(["bootstrap-status"], (current) =>
+        current ? { ...current, license: session.license } : current,
+      );
       setSession(session);
       toast.success("Sesión iniciada");
     } catch (error) {
@@ -38,7 +44,7 @@ export function LoginPage() {
           <div>
             <CardTitle>DentalCare Manager</CardTitle>
             <CardDescription>
-              {locked ? "Sesión bloqueada por inactividad" : "Sistema Integral para Consultorio Dental"}
+              {locked ? "Sesión bloqueada por inactividad" : licenseDescription(license)}
             </CardDescription>
           </div>
         </CardHeader>
@@ -55,9 +61,24 @@ export function LoginPage() {
             <Button type="submit" disabled={form.formState.isSubmitting}>
               Entrar
             </Button>
+            {license?.requiresActivation ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                La prueba terminó. Ingresa tu usuario y la clave de activación en el campo contraseña para habilitar el sistema.
+              </div>
+            ) : null}
           </form>
         </CardContent>
       </Card>
     </main>
   );
+}
+
+function licenseDescription(license?: LicenseStatus) {
+  if (!license) return "Sistema Integral para Consultorio Dental";
+  if (license.isLicensed) return "Sistema activado para operación completa";
+  if (license.requiresActivation) return "Prueba de 30 días finalizada";
+  if (license.isTrialActive) {
+    return `Prueba activa: ${license.daysRemaining} día${license.daysRemaining === 1 ? "" : "s"} restante${license.daysRemaining === 1 ? "" : "s"}`;
+  }
+  return "Sistema Integral para Consultorio Dental";
 }

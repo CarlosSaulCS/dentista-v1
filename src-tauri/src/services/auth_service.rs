@@ -1,16 +1,24 @@
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 
 use crate::errors::{AppError, AppResult};
 use crate::models::{
-    AuthSession, BootstrapStatus, ClinicSummary, LoginInput, SetupInput, UserListItem, UserProfile,
+    AuthSession, BootstrapStatus, ClinicSummary, LicenseStatus, LoginInput, SetupInput,
+    UserListItem, UserProfile,
 };
 use crate::security::{hash_password, hash_session_token, verify_password};
 use crate::services::audit_service::log_action;
 use crate::utils::{new_id, now_utc};
+
+const TRIAL_DAYS: i64 = 30;
+const ACTIVATION_SECRET_SALT: &str = "DentalCare-activation-v1:";
+const ACTIVATION_SECRET_HASH: &str =
+    "5ed0627846e2c45f7ae7f9ebb8e0e1a87e20db9d970344b2bf835ed85d761fed";
+const EXPIRED_LICENSE_MESSAGE: &str = "La prueba de 30 días terminó. Para activar el sistema ingresa la clave de activación proporcionada por el proveedor en el campo de contraseña.";
 
 #[derive(Debug, Clone)]
 pub struct AuthContext {
@@ -34,6 +42,13 @@ struct UserAuthRow {
     specialty: Option<String>,
 }
 
+#[derive(Debug, FromRow)]
+struct LicenseRow {
+    trial_started_at: String,
+    trial_ends_at: String,
+    activated_at: Option<String>,
+}
+
 pub async fn get_bootstrap_status(db: &SqlitePool) -> AppResult<BootstrapStatus> {
     let users_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL")
@@ -50,10 +65,12 @@ pub async fn get_bootstrap_status(db: &SqlitePool) -> AppResult<BootstrapStatus>
     )
     .fetch_optional(db)
     .await?;
+    let license = get_license_status(db).await?;
 
     Ok(BootstrapStatus {
         requires_setup: users_count == 0,
         clinic,
+        license,
     })
 }
 
@@ -84,6 +101,7 @@ pub async fn setup_clinic_and_admin(db: &SqlitePool, input: SetupInput) -> AppRe
     let admin_role_id = new_id();
     let admin_user_id = new_id();
     let password_hash = hash_password(&input.admin_password)?;
+    let trial_ends_at = (Utc::now() + Duration::days(TRIAL_DAYS)).to_rfc3339();
 
     let mut tx = db.begin().await?;
 
@@ -98,6 +116,25 @@ pub async fn setup_clinic_and_admin(db: &SqlitePool, input: SetupInput) -> AppRe
     .bind(input.clinic_phone.as_deref().map(str::trim))
     .bind(input.clinic_whatsapp.as_deref().map(str::trim))
     .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO app_license (id, trial_started_at, trial_ends_at, updated_at)
+        VALUES ('local', ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          trial_started_at = excluded.trial_started_at,
+          trial_ends_at = excluded.trial_ends_at,
+          activated_at = NULL,
+          activated_by_user_id = NULL,
+          activation_fingerprint = NULL,
+          updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(&now)
+    .bind(&trial_ends_at)
     .bind(&now)
     .execute(&mut *tx)
     .await?;
@@ -351,7 +388,18 @@ pub async fn login(db: &SqlitePool, input: LoginInput) -> AppResult<AuthSession>
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    if user.status != "active" || !verify_password(&input.password, &user.password_hash) {
+    if user.status != "active" {
+        return Err(AppError::Unauthorized);
+    }
+    let password_matches_user = verify_password(&input.password, &user.password_hash);
+    let license = get_license_status(db).await?;
+    if license.requires_activation {
+        if verify_activation_secret(&input.password) {
+            activate_license(db, Some(&user.id)).await?;
+        } else {
+            return Err(AppError::Conflict(EXPIRED_LICENSE_MESSAGE.to_string()));
+        }
+    } else if !password_matches_user {
         return Err(AppError::Unauthorized);
     }
 
@@ -397,6 +445,7 @@ pub async fn login(db: &SqlitePool, input: LoginInput) -> AppResult<AuthSession>
         session_token,
         expires_at,
         permissions,
+        license: get_license_status(db).await?,
         user: UserProfile {
             id: user.id,
             clinic_id: user.clinic_id,
@@ -431,6 +480,7 @@ pub async fn validate_session(
     if session_token.trim().is_empty() {
         return Err(AppError::Unauthorized);
     }
+    ensure_license_allows_access(db).await?;
 
     let token_hash = hash_session_token(session_token);
     let now = now_utc();
@@ -474,6 +524,169 @@ pub async fn validate_session(
         full_name: user.full_name,
         permissions,
     })
+}
+
+pub async fn get_license_status(db: &SqlitePool) -> AppResult<LicenseStatus> {
+    ensure_license_row(db).await?;
+    let row = sqlx::query_as::<_, LicenseRow>(
+        "SELECT trial_started_at, trial_ends_at, activated_at FROM app_license WHERE id = 'local'",
+    )
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row
+        .map(|license| build_license_status(&license))
+        .unwrap_or_else(|| LicenseStatus {
+            status: "not_configured".to_string(),
+            trial_started_at: None,
+            trial_ends_at: None,
+            activated_at: None,
+            days_remaining: 0,
+            is_trial_active: false,
+            is_expired: false,
+            is_licensed: false,
+            requires_activation: false,
+        }))
+}
+
+async fn ensure_license_allows_access(db: &SqlitePool) -> AppResult<()> {
+    let license = get_license_status(db).await?;
+    if license.requires_activation {
+        return Err(AppError::Conflict(EXPIRED_LICENSE_MESSAGE.to_string()));
+    }
+    Ok(())
+}
+
+async fn ensure_license_row(db: &SqlitePool) -> AppResult<()> {
+    let existing_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_license")
+        .fetch_one(db)
+        .await?;
+    if existing_count > 0 {
+        return Ok(());
+    }
+
+    let clinic_created_at: Option<String> =
+        sqlx::query_scalar("SELECT created_at FROM clinics ORDER BY created_at LIMIT 1")
+            .fetch_optional(db)
+            .await?;
+    let Some(trial_started_at) = clinic_created_at else {
+        return Ok(());
+    };
+
+    let start = parse_license_datetime(&trial_started_at).unwrap_or_else(Utc::now);
+    let trial_ends_at = (start + Duration::days(TRIAL_DAYS)).to_rfc3339();
+    let now = now_utc();
+    sqlx::query(
+        "INSERT INTO app_license (id, trial_started_at, trial_ends_at, updated_at) VALUES ('local', ?, ?, ?)",
+    )
+    .bind(trial_started_at)
+    .bind(trial_ends_at)
+    .bind(now)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+async fn activate_license(db: &SqlitePool, user_id: Option<&str>) -> AppResult<()> {
+    ensure_license_row(db).await?;
+    let now = now_utc();
+    let fingerprint = hash_session_token(&format!("{}:{}", user_id.unwrap_or("system"), now));
+
+    sqlx::query(
+        r#"
+        UPDATE app_license
+        SET activated_at = COALESCE(activated_at, ?),
+            activated_by_user_id = COALESCE(activated_by_user_id, ?),
+            activation_fingerprint = ?,
+            updated_at = ?
+        WHERE id = 'local'
+        "#,
+    )
+    .bind(&now)
+    .bind(user_id)
+    .bind(&fingerprint)
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    let clinic_id: Option<String> = if let Some(user_id) = user_id {
+        sqlx::query_scalar("SELECT clinic_id FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?
+    } else {
+        None
+    };
+    log_action(
+        db,
+        clinic_id.as_deref(),
+        user_id,
+        "license.activate",
+        "app_license",
+        Some("local"),
+        "security",
+        Some(json!({ "status": "licensed" })),
+    )
+    .await?;
+    Ok(())
+}
+
+fn build_license_status(row: &LicenseRow) -> LicenseStatus {
+    let now = Utc::now();
+    let trial_ends_at = parse_license_datetime(&row.trial_ends_at);
+    let is_licensed = row.activated_at.is_some();
+    let is_expired = !is_licensed && trial_ends_at.map(|end| now >= end).unwrap_or(true);
+    let is_trial_active = !is_licensed && !is_expired;
+    let seconds_remaining = trial_ends_at
+        .map(|end| (end - now).num_seconds().max(0))
+        .unwrap_or(0);
+    let days_remaining = if seconds_remaining == 0 {
+        0
+    } else {
+        (seconds_remaining + 86_399) / 86_400
+    };
+    let status = if is_licensed {
+        "licensed"
+    } else if is_expired {
+        "expired"
+    } else {
+        "trial_active"
+    };
+
+    LicenseStatus {
+        status: status.to_string(),
+        trial_started_at: Some(row.trial_started_at.clone()),
+        trial_ends_at: Some(row.trial_ends_at.clone()),
+        activated_at: row.activated_at.clone(),
+        days_remaining,
+        is_trial_active,
+        is_expired,
+        is_licensed,
+        requires_activation: is_expired && !is_licensed,
+    }
+}
+
+fn parse_license_datetime(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|date| Utc.from_utc_datetime(&date))
+        })
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|date| Utc.from_utc_datetime(&date))
+        })
+}
+
+fn verify_activation_secret(value: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(ACTIVATION_SECRET_SALT.as_bytes());
+    hasher.update(value.trim().as_bytes());
+    hex::encode(hasher.finalize()) == ACTIVATION_SECRET_HASH
 }
 
 pub async fn list_users(db: &SqlitePool, session_token: &str) -> AppResult<Vec<UserListItem>> {

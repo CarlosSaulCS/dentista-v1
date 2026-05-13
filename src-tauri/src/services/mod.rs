@@ -7,3 +7,6 @@ pub mod dashboard_service;
 pub mod odontogram_service;
 pub mod office_service;
 pub mod patient_service;
+
+#[cfg(test)]
+mod hardening_tests;

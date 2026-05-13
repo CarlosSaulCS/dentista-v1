@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Upload } from "lucide-react";
+import { ExternalLink, Upload } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -132,12 +132,13 @@ export function FilesPage() {
                 <TableHead>Categoría</TableHead>
                 <TableHead>Tamaño</TableHead>
                 <TableHead>Fecha</TableHead>
+                <TableHead>Acción</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visibleFiles.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                     No hay archivos guardados para este filtro.
                   </TableCell>
                 </TableRow>
@@ -149,6 +150,20 @@ export function FilesPage() {
                     <TableCell>{file.categoryName}</TableCell>
                     <TableCell>{(file.sizeBytes / 1024).toFixed(1)} KB</TableCell>
                     <TableCell>{formatDateTime(file.createdAt)}</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          officeApi.openPatientFile(sessionToken, file.id).catch((error) => {
+                            toast.error(error instanceof Error ? error.message : String(error));
+                          });
+                        }}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Abrir
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))
               )}

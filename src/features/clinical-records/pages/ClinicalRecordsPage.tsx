@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, FileText } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/data/EmptyState";
@@ -8,11 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { createClinicalEvolution, createClinicalRecord, listClinicalEvolutions, listClinicalRecords } from "@/features/clinical-records/services/clinical-service";
 import { listPatients } from "@/features/patients/services/patient-service";
 import { formatDateTime } from "@/lib/api";
+import { officeApi, type PatientFileSummary } from "@/lib/office-api";
 import { useAuthStore } from "@/store/auth-store";
 
 export function ClinicalRecordsPage() {
@@ -36,6 +39,11 @@ export function ClinicalRecordsPage() {
   const evolutions = useQuery({
     queryKey: ["clinical-evolutions", sessionToken, patientId],
     queryFn: () => listClinicalEvolutions(sessionToken ?? "", patientId),
+    enabled: Boolean(sessionToken && patientId),
+  });
+  const patientFiles = useQuery({
+    queryKey: ["patient-files", sessionToken],
+    queryFn: () => officeApi.listPatientFiles(sessionToken ?? ""),
     enabled: Boolean(sessionToken && patientId),
   });
 
@@ -67,6 +75,14 @@ export function ClinicalRecordsPage() {
     nextParams.set("patientId", value);
     setSearchParams(nextParams, { replace: true });
   };
+  const visibleFiles = (patientFiles.data ?? []).filter((file) => file.patientId === patientId);
+  const openFile = async (file: PatientFileSummary) => {
+    try {
+      await officeApi.openPatientFile(sessionToken ?? "", file.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -97,6 +113,7 @@ export function ClinicalRecordsPage() {
           <TabsList>
             <TabsTrigger value="record">Historia clínica</TabsTrigger>
             <TabsTrigger value="evolution">Evoluciones</TabsTrigger>
+            <TabsTrigger value="documents">Documentos</TabsTrigger>
           </TabsList>
 
           <TabsContent value="record" className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
@@ -162,6 +179,58 @@ export function ClinicalRecordsPage() {
                     <p className="mt-2 text-sm text-muted-foreground">{evolution.proceduresDone || evolution.findings || "Sin detalle adicional"}</p>
                   </div>
                 ))}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="documents">
+            <Card>
+              <CardHeader>
+                <CardTitle>Documentos del expediente</CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Documento</TableHead>
+                      <TableHead>Categoría</TableHead>
+                      <TableHead>Descripción</TableHead>
+                      <TableHead>Tamaño</TableHead>
+                      <TableHead>Fecha</TableHead>
+                      <TableHead>Acción</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visibleFiles.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                          No hay documentos guardados para este paciente.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      visibleFiles.map((file) => (
+                        <TableRow key={file.id}>
+                          <TableCell className="font-medium">
+                            <span className="inline-flex items-center gap-2">
+                              <FileText className="h-4 w-4 text-primary" />
+                              {file.originalName}
+                            </span>
+                          </TableCell>
+                          <TableCell>{file.categoryName ?? "Sin categoría"}</TableCell>
+                          <TableCell>{file.description ?? "Sin descripción"}</TableCell>
+                          <TableCell>{(file.sizeBytes / 1024).toFixed(1)} KB</TableCell>
+                          <TableCell>{formatDateTime(file.createdAt)}</TableCell>
+                          <TableCell>
+                            <Button variant="outline" size="sm" onClick={() => void openFile(file)}>
+                              <ExternalLink className="h-4 w-4" />
+                              Abrir
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>

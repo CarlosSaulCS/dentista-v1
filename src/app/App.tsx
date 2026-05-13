@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
@@ -31,10 +32,17 @@ function AppBootstrap() {
   useInactivityLock();
   const sessionToken = useAuthStore((state) => state.sessionToken);
   const locked = useAuthStore((state) => state.locked);
+  const clearSession = useAuthStore((state) => state.clearSession);
   const { data, isLoading, error } = useQuery({
     queryKey: ["bootstrap-status"],
     queryFn: getBootstrapStatus,
   });
+
+  useEffect(() => {
+    if (data?.license.requiresActivation && sessionToken) {
+      clearSession();
+    }
+  }, [clearSession, data?.license.requiresActivation, sessionToken]);
 
   if (isLoading) {
     return (
@@ -65,8 +73,12 @@ function AppBootstrap() {
     return <SetupPage />;
   }
 
+  if (data?.license.requiresActivation && sessionToken) {
+    return <LoginPage license={data.license} />;
+  }
+
   if (!sessionToken || locked) {
-    return <LoginPage />;
+    return <LoginPage license={data?.license} />;
   }
 
   return (

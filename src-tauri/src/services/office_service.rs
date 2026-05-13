@@ -10,7 +10,7 @@ use crate::models::*;
 use crate::security::hash_password;
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::validate_session;
-use crate::utils::{new_id, now_utc};
+use crate::utils::{new_id, normalize_search, now_utc};
 
 pub async fn list_treatments(
     db: &SqlitePool,
@@ -783,12 +783,14 @@ pub async fn list_inventory_items(
     let ctx = validate_session(db, session_token, None).await?;
     let rows = sqlx::query_as::<_, InventoryItemSummary>(
         r#"
-        SELECT ii.id, s.name AS supplier_name, ii.name, ii.category, ii.unit,
+        SELECT ii.id, ii.supplier_id, s.name AS supplier_name, ii.name, ii.category, ii.unit,
                ii.current_quantity, ii.minimum_stock, ii.cost_cents, ii.expiration_date,
                ii.location, ii.active
         FROM inventory_items ii
         LEFT JOIN suppliers s ON s.id = ii.supplier_id
         WHERE ii.clinic_id = ?
+          AND ii.deleted_at IS NULL
+          AND ii.active = 1
         ORDER BY ii.name
         "#,
     )
@@ -812,6 +814,20 @@ pub async fn create_inventory_item(
             "Nombre, categoría y unidad son obligatorios".to_string(),
         ));
     }
+    if input.current_quantity < 0.0 || input.minimum_stock < 0.0 || input.cost_cents < 0 {
+        return Err(AppError::Validation(
+            "Cantidad, stock mínimo y costo no pueden ser negativos".to_string(),
+        ));
+    }
+    ensure_unique_inventory_item(
+        db,
+        &ctx.clinic_id,
+        input.name.trim(),
+        input.category.trim(),
+        input.unit.trim(),
+        None,
+    )
+    .await?;
     let id = new_id();
     let now = now_utc();
     sqlx::query(
@@ -853,7 +869,147 @@ pub async fn create_inventory_item(
     .bind(&now)
     .execute(db)
     .await?;
-    get_inventory_item_by_id(db, &ctx.clinic_id, &id).await
+    let item = get_inventory_item_by_id(db, &ctx.clinic_id, &id).await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
+    Ok(item)
+}
+
+pub async fn update_inventory_item(
+    db: &SqlitePool,
+    session_token: &str,
+    input: UpdateInventoryItemInput,
+) -> AppResult<InventoryItemSummary> {
+    let ctx = validate_session(db, session_token, None).await?;
+    if input.id.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Selecciona un insumo para editar".to_string(),
+        ));
+    }
+    if input.name.trim().is_empty()
+        || input.category.trim().is_empty()
+        || input.unit.trim().is_empty()
+    {
+        return Err(AppError::Validation(
+            "Nombre, categoría y unidad son obligatorios".to_string(),
+        ));
+    }
+    if input.current_quantity < 0.0 || input.minimum_stock < 0.0 || input.cost_cents < 0 {
+        return Err(AppError::Validation(
+            "Cantidad, stock mínimo y costo no pueden ser negativos".to_string(),
+        ));
+    }
+    ensure_unique_inventory_item(
+        db,
+        &ctx.clinic_id,
+        input.name.trim(),
+        input.category.trim(),
+        input.unit.trim(),
+        Some(input.id.trim()),
+    )
+    .await?;
+
+    let now = now_utc();
+    let result = sqlx::query(
+        r#"
+        UPDATE inventory_items
+        SET supplier_id = ?, name = ?, category = ?, unit = ?, current_quantity = ?,
+            minimum_stock = ?, cost_cents = ?, purchase_date = ?, expiration_date = ?,
+            location = ?, active = ?, updated_at = ?
+        WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
+        "#,
+    )
+    .bind(
+        input
+            .supplier_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )
+    .bind(input.name.trim())
+    .bind(input.category.trim())
+    .bind(input.unit.trim())
+    .bind(input.current_quantity)
+    .bind(input.minimum_stock)
+    .bind(input.cost_cents)
+    .bind(
+        input
+            .purchase_date
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )
+    .bind(
+        input
+            .expiration_date
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )
+    .bind(input.location.as_deref().map(str::trim))
+    .bind(if input.active { 1 } else { 0 })
+    .bind(&now)
+    .bind(&ctx.clinic_id)
+    .bind(input.id.trim())
+    .execute(db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation("Insumo no encontrado".to_string()));
+    }
+
+    log_action(
+        db,
+        Some(&ctx.clinic_id),
+        Some(&ctx.user_id),
+        "inventory.update",
+        "inventory_items",
+        Some(input.id.trim()),
+        "info",
+        Some(json!({ "name": input.name, "quantity": input.current_quantity, "minimumStock": input.minimum_stock })),
+    )
+    .await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
+    get_inventory_item_by_id(db, &ctx.clinic_id, input.id.trim()).await
+}
+
+pub async fn soft_delete_inventory_item(
+    db: &SqlitePool,
+    session_token: &str,
+    inventory_item_id: &str,
+) -> AppResult<InventoryItemSummary> {
+    let ctx = validate_session(db, session_token, None).await?;
+    if inventory_item_id.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Selecciona un insumo para dar de baja".to_string(),
+        ));
+    }
+    let item = get_inventory_item_by_id(db, &ctx.clinic_id, inventory_item_id).await?;
+    let now = now_utc();
+    sqlx::query(
+        r#"
+        UPDATE inventory_items
+        SET active = 0, deleted_at = ?, deleted_by_user_id = ?, updated_at = ?
+        WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
+        "#,
+    )
+    .bind(&now)
+    .bind(&ctx.user_id)
+    .bind(&now)
+    .bind(&ctx.clinic_id)
+    .bind(inventory_item_id.trim())
+    .execute(db)
+    .await?;
+
+    log_action(
+        db,
+        Some(&ctx.clinic_id),
+        Some(&ctx.user_id),
+        "inventory.soft_delete",
+        "inventory_items",
+        Some(inventory_item_id.trim()),
+        "warning",
+        Some(json!({ "name": item.name })),
+    )
+    .await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
+    Ok(item)
 }
 
 pub async fn create_inventory_movement(
@@ -871,6 +1027,19 @@ pub async fn create_inventory_movement(
         "salida" | "merma" | "consumo" => -1.0,
         _ => 1.0,
     };
+    let current_quantity: f64 = sqlx::query_scalar(
+        "SELECT current_quantity FROM inventory_items WHERE clinic_id = ? AND id = ? AND active = 1 AND deleted_at IS NULL",
+    )
+    .bind(&ctx.clinic_id)
+    .bind(input.inventory_item_id.trim())
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Insumo no encontrado".to_string()))?;
+    if direction < 0.0 && current_quantity < input.quantity {
+        return Err(AppError::Validation(
+            "No hay stock suficiente para registrar la salida".to_string(),
+        ));
+    }
     let now = now_utc();
     sqlx::query(
         "INSERT INTO inventory_movements (id, clinic_id, inventory_item_id, movement_type, quantity, reason, created_by_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -892,12 +1061,14 @@ pub async fn create_inventory_movement(
         .bind(&input.inventory_item_id)
         .execute(db)
         .await?;
-    get_inventory_item_by_id(db, &ctx.clinic_id, &input.inventory_item_id).await
+    let item = get_inventory_item_by_id(db, &ctx.clinic_id, &input.inventory_item_id).await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
+    Ok(item)
 }
 
 pub async fn list_alerts(db: &SqlitePool, session_token: &str) -> AppResult<Vec<AlertSummary>> {
     let ctx = validate_session(db, session_token, None).await?;
-    refresh_system_alerts(db, &ctx.clinic_id).await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
     let rows = sqlx::query_as::<_, AlertSummary>(
         r#"
         SELECT a.id, p.full_name AS patient_name, a.alert_type, a.priority, a.title,
@@ -1086,6 +1257,55 @@ pub async fn list_patient_files(
     Ok(rows)
 }
 
+pub async fn open_patient_file(
+    state: &AppState,
+    session_token: &str,
+    file_id: &str,
+) -> AppResult<()> {
+    let ctx = validate_session(&state.db, session_token, Some("patients.view")).await?;
+    if file_id.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Selecciona un archivo para abrir".to_string(),
+        ));
+    }
+
+    let relative_path: String = sqlx::query_scalar(
+        "SELECT relative_path FROM files WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
+    )
+    .bind(&ctx.clinic_id)
+    .bind(file_id.trim())
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Archivo no encontrado".to_string()))?;
+
+    let absolute_path = state.files_dir.join(relative_path);
+    let canonical_base = state.files_dir.canonicalize()?;
+    let canonical_path = absolute_path.canonicalize()?;
+    if !canonical_path.starts_with(canonical_base) {
+        return Err(AppError::Conflict(
+            "Ruta de archivo fuera del expediente local".to_string(),
+        ));
+    }
+
+    tauri_plugin_opener::open_path(&canonical_path, None::<&str>)
+        .map_err(|error| AppError::Validation(format!("No se pudo abrir el archivo: {error}")))?;
+    Ok(())
+}
+
+pub async fn open_external_url(db: &SqlitePool, session_token: &str, url: &str) -> AppResult<()> {
+    let _ctx = validate_session(db, session_token, None).await?;
+    let clean_url = url.trim();
+    let allowed = clean_url.starts_with("mailto:") || clean_url.starts_with("https://wa.me/");
+    if !allowed {
+        return Err(AppError::Validation(
+            "Enlace externo no permitido".to_string(),
+        ));
+    }
+    tauri_plugin_opener::open_url(clean_url, None::<&str>)
+        .map_err(|error| AppError::Validation(format!("No se pudo abrir el enlace: {error}")))?;
+    Ok(())
+}
+
 pub async fn list_consent_templates(
     db: &SqlitePool,
     session_token: &str,
@@ -1134,7 +1354,7 @@ pub async fn get_reports_summary(
     input: ReportsFilterInput,
 ) -> AppResult<ReportsSummary> {
     let ctx = validate_session(db, session_token, Some("reports.financial")).await?;
-    refresh_system_alerts(db, &ctx.clinic_id).await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
     let from = input.date_from;
     let to = format!("{}T23:59:59", input.date_to);
     let income_cents = scalar_sum(db, "SELECT COALESCE(SUM(amount_cents), 0) FROM payments WHERE clinic_id = ? AND status = 'active' AND paid_at BETWEEN ? AND ?", &ctx.clinic_id, &from, &to).await?;
@@ -1148,13 +1368,13 @@ pub async fn get_reports_summary(
     .await?;
     let appointments_count = scalar_count(
         db,
-        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND starts_at BETWEEN ? AND ?",
+        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND deleted_at IS NULL AND starts_at BETWEEN ? AND ?",
         &ctx.clinic_id,
         &from,
         &to,
     )
     .await?;
-    let cancelled_appointments = scalar_count(db, "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND status = 'cancelada' AND starts_at BETWEEN ? AND ?", &ctx.clinic_id, &from, &to).await?;
+    let cancelled_appointments = scalar_count(db, "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND deleted_at IS NULL AND status = 'cancelada' AND starts_at BETWEEN ? AND ?", &ctx.clinic_id, &from, &to).await?;
     let new_patients = scalar_count(db, "SELECT COUNT(*) FROM patients WHERE clinic_id = ? AND created_at BETWEEN ? AND ? AND deleted_at IS NULL", &ctx.clinic_id, &from, &to).await?;
     let estimates_total = scalar_count(
         db,
@@ -1165,7 +1385,7 @@ pub async fn get_reports_summary(
     )
     .await?;
     let estimates_approved = scalar_count(db, "SELECT COUNT(*) FROM estimates WHERE clinic_id = ? AND status = 'approved' AND created_at BETWEEN ? AND ?", &ctx.clinic_id, &from, &to).await?;
-    let low_inventory: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_items WHERE clinic_id = ? AND active = 1 AND current_quantity <= minimum_stock")
+    let low_inventory: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_items WHERE clinic_id = ? AND active = 1 AND deleted_at IS NULL AND current_quantity <= minimum_stock")
         .bind(&ctx.clinic_id)
         .fetch_one(db)
         .await?;
@@ -1204,7 +1424,7 @@ pub async fn get_reports_summary(
         r#"
         SELECT status AS label, COUNT(*) AS value
         FROM appointments
-        WHERE clinic_id = ? AND starts_at BETWEEN ? AND ?
+        WHERE clinic_id = ? AND deleted_at IS NULL AND starts_at BETWEEN ? AND ?
         GROUP BY status
         ORDER BY value DESC
         "#,
@@ -1271,6 +1491,124 @@ pub async fn list_message_templates(
     .fetch_all(db)
     .await?;
     Ok(rows)
+}
+
+pub async fn global_search(
+    db: &SqlitePool,
+    session_token: &str,
+    term: &str,
+) -> AppResult<Vec<GlobalSearchResult>> {
+    let ctx = validate_session(db, session_token, None).await?;
+    let trimmed = term.trim();
+    if trimmed.len() < 2 {
+        return Ok(Vec::new());
+    }
+
+    let search = normalize_search(trimmed);
+    let mut results = Vec::new();
+
+    let mut patients = sqlx::query_as::<_, GlobalSearchResult>(
+        r#"
+        SELECT 'patient' AS entity_type,
+               id,
+               full_name AS title,
+               COALESCE(NULLIF(phone, ''), NULLIF(whatsapp, ''), NULLIF(email, ''), 'Sin contacto') AS subtitle,
+               '/patients' AS route,
+               status
+        FROM patients
+        WHERE clinic_id = ?
+          AND deleted_at IS NULL
+          AND (full_name LIKE ? OR IFNULL(phone, '') LIKE ? OR IFNULL(whatsapp, '') LIKE ? OR IFNULL(email, '') LIKE ?)
+        ORDER BY updated_at DESC
+        LIMIT 6
+        "#,
+    )
+    .bind(&ctx.clinic_id)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .fetch_all(db)
+    .await?;
+    results.append(&mut patients);
+
+    let mut appointments = sqlx::query_as::<_, GlobalSearchResult>(
+        r#"
+        SELECT 'appointment' AS entity_type,
+               a.id,
+               p.full_name AS title,
+               a.starts_at || ' - ' || a.reason AS subtitle,
+               '/appointments?date=' || substr(a.starts_at, 1, 10) AS route,
+               a.status
+        FROM appointments a
+        JOIN patients p ON p.id = a.patient_id
+        WHERE a.clinic_id = ?
+          AND a.deleted_at IS NULL
+          AND (p.full_name LIKE ? OR a.reason LIKE ? OR a.starts_at LIKE ? OR a.status LIKE ?)
+        ORDER BY a.starts_at DESC
+        LIMIT 6
+        "#,
+    )
+    .bind(&ctx.clinic_id)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .fetch_all(db)
+    .await?;
+    results.append(&mut appointments);
+
+    let mut inventory = sqlx::query_as::<_, GlobalSearchResult>(
+        r#"
+        SELECT 'inventory' AS entity_type,
+               id,
+               name AS title,
+               category || ' - ' || current_quantity || ' ' || unit AS subtitle,
+               '/inventory' AS route,
+               CASE WHEN current_quantity <= minimum_stock THEN 'bajo' ELSE 'activo' END AS status
+        FROM inventory_items
+        WHERE clinic_id = ?
+          AND active = 1
+          AND deleted_at IS NULL
+          AND (name LIKE ? OR category LIKE ? OR IFNULL(location, '') LIKE ?)
+        ORDER BY updated_at DESC
+        LIMIT 6
+        "#,
+    )
+    .bind(&ctx.clinic_id)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .fetch_all(db)
+    .await?;
+    results.append(&mut inventory);
+
+    let mut estimates = sqlx::query_as::<_, GlobalSearchResult>(
+        r#"
+        SELECT 'estimate' AS entity_type,
+               e.id,
+               e.folio AS title,
+               p.full_name || ' - ' || printf('%.2f', e.total_cents / 100.0) AS subtitle,
+               '/estimates' AS route,
+               e.status
+        FROM estimates e
+        JOIN patients p ON p.id = e.patient_id
+        WHERE e.clinic_id = ?
+          AND (e.folio LIKE ? OR p.full_name LIKE ? OR e.status LIKE ?)
+        ORDER BY e.created_at DESC
+        LIMIT 6
+        "#,
+    )
+    .bind(&ctx.clinic_id)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .fetch_all(db)
+    .await?;
+    results.append(&mut estimates);
+
+    results.truncate(18);
+    Ok(results)
 }
 
 pub async fn list_roles(db: &SqlitePool, session_token: &str) -> AppResult<Vec<RoleSummary>> {
@@ -1407,7 +1745,7 @@ pub async fn refresh_system_alerts(db: &SqlitePool, clinic_id: &str) -> AppResul
         r#"
         SELECT id, name, current_quantity, minimum_stock, expiration_date
         FROM inventory_items
-        WHERE clinic_id = ? AND active = 1 AND current_quantity <= minimum_stock
+        WHERE clinic_id = ? AND active = 1 AND deleted_at IS NULL AND current_quantity <= minimum_stock
         "#,
     )
     .bind(clinic_id)
@@ -1435,6 +1773,7 @@ pub async fn refresh_system_alerts(db: &SqlitePool, clinic_id: &str) -> AppResul
         FROM inventory_items
         WHERE clinic_id = ?
           AND active = 1
+          AND deleted_at IS NULL
           AND expiration_date IS NOT NULL
           AND expiration_date != ''
           AND expiration_date <= ?
@@ -1475,6 +1814,7 @@ pub async fn refresh_system_alerts(db: &SqlitePool, clinic_id: &str) -> AppResul
         FROM appointments a
         JOIN patients p ON p.id = a.patient_id
         WHERE a.clinic_id = ?
+          AND a.deleted_at IS NULL
           AND a.status = 'programada'
           AND a.starts_at >= ?
           AND a.starts_at < date(?, '+2 day')
@@ -1562,6 +1902,136 @@ pub async fn refresh_system_alerts(db: &SqlitePool, clinic_id: &str) -> AppResul
     Ok(())
 }
 
+pub async fn reconcile_system_alerts(db: &SqlitePool, clinic_id: &str) -> AppResult<()> {
+    let now = now_utc();
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    sqlx::query(
+        r#"
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
+        WHERE clinic_id = ?
+          AND status = 'open'
+          AND alert_type = 'inventario_bajo'
+          AND related_entity_type = 'inventory_items'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM inventory_items ii
+            WHERE ii.id = alerts.related_entity_id
+              AND ii.clinic_id = alerts.clinic_id
+              AND ii.active = 1
+              AND ii.deleted_at IS NULL
+              AND ii.current_quantity <= ii.minimum_stock
+          )
+        "#,
+    )
+    .bind(&now)
+    .bind(clinic_id)
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
+        WHERE clinic_id = ?
+          AND status = 'open'
+          AND alert_type IN ('insumo_caducado', 'insumo_por_caducar')
+          AND related_entity_type = 'inventory_items'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM inventory_items ii
+            WHERE ii.id = alerts.related_entity_id
+              AND ii.clinic_id = alerts.clinic_id
+              AND ii.active = 1
+              AND ii.deleted_at IS NULL
+              AND ii.expiration_date IS NOT NULL
+              AND ii.expiration_date != ''
+              AND ii.expiration_date <= date('now', '+30 day')
+          )
+        "#,
+    )
+    .bind(&now)
+    .bind(clinic_id)
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
+        WHERE clinic_id = ?
+          AND status = 'open'
+          AND alert_type = 'cita_sin_confirmar'
+          AND related_entity_type = 'appointments'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM appointments a
+            WHERE a.id = alerts.related_entity_id
+              AND a.clinic_id = alerts.clinic_id
+              AND a.deleted_at IS NULL
+              AND a.status = 'programada'
+              AND a.starts_at >= date('now')
+              AND a.starts_at < date('now', '+2 day')
+          )
+        "#,
+    )
+    .bind(&now)
+    .bind(clinic_id)
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
+        WHERE clinic_id = ?
+          AND status = 'open'
+          AND alert_type = 'presupuesto_vencido'
+          AND related_entity_type = 'estimates'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM estimates e
+            WHERE e.id = alerts.related_entity_id
+              AND e.clinic_id = alerts.clinic_id
+              AND e.status IN ('draft', 'delivered')
+              AND e.valid_until IS NOT NULL
+              AND e.valid_until != ''
+              AND e.valid_until < date('now')
+          )
+        "#,
+    )
+    .bind(&now)
+    .bind(clinic_id)
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE alerts
+        SET status = 'resolved', resolved_at = ?
+        WHERE clinic_id = ?
+          AND status = 'open'
+          AND alert_type = 'respaldo_pendiente'
+          AND related_entity_type = 'system'
+          AND related_entity_id = 'backups'
+          AND EXISTS (
+            SELECT 1
+            FROM backups b
+            WHERE b.clinic_id = alerts.clinic_id
+              AND b.status = 'completed'
+              AND substr(b.created_at, 1, 10) = ?
+          )
+        "#,
+    )
+    .bind(&now)
+    .bind(clinic_id)
+    .bind(&today)
+    .execute(db)
+    .await?;
+
+    refresh_system_alerts(db, clinic_id).await
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "System alert deduplication needs the alert identity and display fields together."
@@ -1647,6 +2117,7 @@ pub async fn get_restock_items(
         LEFT JOIN suppliers s ON s.id = ii.supplier_id
         WHERE ii.clinic_id = ?
           AND ii.active = 1
+          AND ii.deleted_at IS NULL
           AND (ii.current_quantity <= ii.minimum_stock
                OR (ii.expiration_date IS NOT NULL
                    AND ii.expiration_date != ''
@@ -1709,6 +2180,64 @@ async fn ensure_unique_treatment_name(
     if count > 0 {
         return Err(AppError::Validation(
             "Ese tratamiento ya existe en el catálogo. Edítalo para evitar duplicados.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_unique_inventory_item(
+    db: &SqlitePool,
+    clinic_id: &str,
+    name: &str,
+    category: &str,
+    unit: &str,
+    except_id: Option<&str>,
+) -> AppResult<()> {
+    let count: i64 = if let Some(except_id) = except_id {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM inventory_items
+            WHERE clinic_id = ?
+              AND active = 1
+              AND deleted_at IS NULL
+              AND LOWER(name) = LOWER(?)
+              AND LOWER(category) = LOWER(?)
+              AND LOWER(unit) = LOWER(?)
+              AND id <> ?
+            "#,
+        )
+        .bind(clinic_id)
+        .bind(name)
+        .bind(category)
+        .bind(unit)
+        .bind(except_id)
+        .fetch_one(db)
+        .await?
+    } else {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM inventory_items
+            WHERE clinic_id = ?
+              AND active = 1
+              AND deleted_at IS NULL
+              AND LOWER(name) = LOWER(?)
+              AND LOWER(category) = LOWER(?)
+              AND LOWER(unit) = LOWER(?)
+            "#,
+        )
+        .bind(clinic_id)
+        .bind(name)
+        .bind(category)
+        .bind(unit)
+        .fetch_one(db)
+        .await?
+    };
+
+    if count > 0 {
+        return Err(AppError::Validation(
+            "Ya existe un insumo activo con el mismo nombre, categoría y unidad".to_string(),
         ));
     }
     Ok(())
@@ -1906,12 +2435,12 @@ async fn get_inventory_item_by_id(
 ) -> AppResult<InventoryItemSummary> {
     sqlx::query_as::<_, InventoryItemSummary>(
         r#"
-        SELECT ii.id, s.name AS supplier_name, ii.name, ii.category, ii.unit,
+        SELECT ii.id, ii.supplier_id, s.name AS supplier_name, ii.name, ii.category, ii.unit,
                ii.current_quantity, ii.minimum_stock, ii.cost_cents, ii.expiration_date,
                ii.location, ii.active
         FROM inventory_items ii
         LEFT JOIN suppliers s ON s.id = ii.supplier_id
-        WHERE ii.clinic_id = ? AND ii.id = ?
+        WHERE ii.clinic_id = ? AND ii.id = ? AND ii.deleted_at IS NULL
         "#,
     )
     .bind(clinic_id)

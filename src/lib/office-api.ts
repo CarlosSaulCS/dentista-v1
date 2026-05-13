@@ -59,6 +59,16 @@ export type EstimateSummary = {
   createdAt: string;
 };
 
+export type EstimateItemView = {
+  id: string;
+  estimateId: string;
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  discountCents: number;
+  totalCents: number;
+};
+
 export type PaymentSummary = {
   id: string;
   patientId: string;
@@ -98,6 +108,7 @@ export type SupplierSummary = {
 
 export type InventoryItemSummary = {
   id: string;
+  supplierId?: string | null;
   supplierName?: string | null;
   name: string;
   category: string;
@@ -181,6 +192,15 @@ export type ReportExportResult = {
   createdAt: string;
 };
 
+export type GlobalSearchResult = {
+  entityType: string;
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  route: string;
+  status?: string | null;
+};
+
 export type MessageTemplateSummary = {
   id: string;
   name: string;
@@ -220,6 +240,8 @@ export const officeApi = {
     invokeCommand<EstimateSummary>("create_estimate", { sessionToken, input }),
   updateEstimateStatus: (sessionToken: string, id: string, status: string) =>
     invokeCommand<EstimateSummary>("update_estimate_status", { sessionToken, input: { id, status } }),
+  listEstimateItems: (sessionToken: string, estimateId: string) =>
+    invokeCommand<EstimateItemView[]>("list_estimate_items", { sessionToken, estimateId }),
   listPayments: (sessionToken: string) => invokeCommand<PaymentSummary[]>("list_payments", { sessionToken }),
   registerPayment: (sessionToken: string, input: Record<string, unknown>) =>
     invokeCommand<PaymentSummary>("register_payment", { sessionToken, input }),
@@ -236,6 +258,10 @@ export const officeApi = {
     invokeCommand<InventoryItemSummary[]>("list_inventory_items", { sessionToken }),
   createInventoryItem: (sessionToken: string, input: Record<string, unknown>) =>
     invokeCommand<InventoryItemSummary>("create_inventory_item", { sessionToken, input }),
+  updateInventoryItem: (sessionToken: string, input: Record<string, unknown>) =>
+    invokeCommand<InventoryItemSummary>("update_inventory_item", { sessionToken, input }),
+  softDeleteInventoryItem: (sessionToken: string, inventoryItemId: string) =>
+    invokeCommand<InventoryItemSummary>("soft_delete_inventory_item", { sessionToken, inventoryItemId }),
   createInventoryMovement: (sessionToken: string, input: Record<string, unknown>) =>
     invokeCommand<InventoryItemSummary>("create_inventory_movement", { sessionToken, input }),
   listAlerts: (sessionToken: string) => invokeCommand<AlertSummary[]>("list_alerts", { sessionToken }),
@@ -246,6 +272,10 @@ export const officeApi = {
   savePatientFile: (sessionToken: string, input: Record<string, unknown>) =>
     invokeCommand<PatientFileSummary>("save_patient_file", { sessionToken, input }),
   listPatientFiles: (sessionToken: string) => invokeCommand<PatientFileSummary[]>("list_patient_files", { sessionToken }),
+  openPatientFile: (sessionToken: string, fileId: string) =>
+    invokeCommand<void>("open_patient_file", { sessionToken, fileId }),
+  openExternalUrl: (sessionToken: string, url: string) =>
+    invokeCommand<void>("open_external_url", { sessionToken, url }),
   listConsentTemplates: (sessionToken: string) =>
     invokeCommand<ConsentTemplateSummary[]>("list_consent_templates", { sessionToken }),
   createConsentTemplate: (sessionToken: string, input: Record<string, unknown>) =>
@@ -258,6 +288,8 @@ export const officeApi = {
     invokeCommand<ClinicSummary>("update_clinic_settings", { sessionToken, input }),
   listMessageTemplates: (sessionToken: string) =>
     invokeCommand<MessageTemplateSummary[]>("list_message_templates", { sessionToken }),
+  globalSearch: (sessionToken: string, term: string) =>
+    invokeCommand<GlobalSearchResult[]>("global_search", { sessionToken, term }),
   listRoles: (sessionToken: string) => invokeCommand<RoleSummary[]>("list_roles", { sessionToken }),
   createUser: (sessionToken: string, input: Record<string, unknown>) =>
     invokeCommand<UserListItem>("create_user", { sessionToken, input }),

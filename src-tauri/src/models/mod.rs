@@ -18,6 +18,21 @@ pub struct ClinicSummary {
 pub struct BootstrapStatus {
     pub requires_setup: bool,
     pub clinic: Option<ClinicSummary>,
+    pub license: LicenseStatus,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseStatus {
+    pub status: String,
+    pub trial_started_at: Option<String>,
+    pub trial_ends_at: Option<String>,
+    pub activated_at: Option<String>,
+    pub days_remaining: i64,
+    pub is_trial_active: bool,
+    pub is_expired: bool,
+    pub is_licensed: bool,
+    pub requires_activation: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +74,7 @@ pub struct AuthSession {
     pub expires_at: String,
     pub user: UserProfile,
     pub permissions: Vec<String>,
+    pub license: LicenseStatus,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -91,6 +107,29 @@ pub struct CreatePatientInput {
     pub general_notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePatientInput {
+    pub id: String,
+    pub full_name: String,
+    pub birth_date: Option<String>,
+    pub sex: Option<String>,
+    pub phone: Option<String>,
+    pub whatsapp: Option<String>,
+    pub email: Option<String>,
+    pub address: Option<String>,
+    pub emergency_contact_name: Option<String>,
+    pub emergency_contact_phone: Option<String>,
+    pub occupation: Option<String>,
+    pub allergies: Option<String>,
+    pub systemic_diseases: Option<String>,
+    pub current_medications: Option<String>,
+    pub relevant_history: Option<String>,
+    pub habits: Option<String>,
+    pub general_notes: Option<String>,
+    pub status: String,
+}
+
 #[derive(Debug, Serialize, FromRow, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PatientSummary {
@@ -101,9 +140,16 @@ pub struct PatientSummary {
     pub phone: Option<String>,
     pub whatsapp: Option<String>,
     pub email: Option<String>,
+    pub address: Option<String>,
+    pub emergency_contact_name: Option<String>,
+    pub emergency_contact_phone: Option<String>,
+    pub occupation: Option<String>,
     pub allergies: Option<String>,
     pub systemic_diseases: Option<String>,
     pub current_medications: Option<String>,
+    pub relevant_history: Option<String>,
+    pub habits: Option<String>,
+    pub general_notes: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -130,6 +176,20 @@ pub struct CreateAppointmentInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateAppointmentInput {
+    pub id: String,
+    pub patient_id: String,
+    pub dentist_user_id: Option<String>,
+    pub starts_at: String,
+    pub duration_minutes: i64,
+    pub reason: String,
+    pub appointment_type: String,
+    pub status: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListAppointmentsInput {
     pub date: Option<String>,
     pub status: Option<String>,
@@ -149,6 +209,9 @@ pub struct AppointmentSummary {
     pub id: String,
     pub patient_id: String,
     pub patient_name: String,
+    pub patient_phone: Option<String>,
+    pub patient_whatsapp: Option<String>,
+    pub patient_email: Option<String>,
     pub dentist_user_id: Option<String>,
     pub dentist_name: Option<String>,
     pub starts_at: String,
@@ -558,6 +621,23 @@ pub struct CreateInventoryItemInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateInventoryItemInput {
+    pub id: String,
+    pub supplier_id: Option<String>,
+    pub name: String,
+    pub category: String,
+    pub unit: String,
+    pub current_quantity: f64,
+    pub minimum_stock: f64,
+    pub cost_cents: i64,
+    pub purchase_date: Option<String>,
+    pub expiration_date: Option<String>,
+    pub location: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateInventoryMovementInput {
     pub inventory_item_id: String,
     pub movement_type: String,
@@ -569,6 +649,7 @@ pub struct CreateInventoryMovementInput {
 #[serde(rename_all = "camelCase")]
 pub struct InventoryItemSummary {
     pub id: String,
+    pub supplier_id: Option<String>,
     pub supplier_name: Option<String>,
     pub name: String,
     pub category: String,
@@ -712,6 +793,17 @@ pub struct ReportExportResult {
     pub path: String,
     pub size_bytes: u64,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalSearchResult {
+    pub entity_type: String,
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub route: String,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

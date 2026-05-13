@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Building2, ShieldCheck } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -29,6 +30,7 @@ export function SetupPage() {
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       const session = await setupClinicAndAdmin(values);
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap-status"] });
       setSession(session);
       toast.success("Consultorio y administrador creados");
     } catch (error) {
@@ -119,4 +121,3 @@ function FieldError({ message }: { message?: string }) {
   if (!message) return null;
   return <p className="text-xs text-destructive">{message}</p>;
 }
-import { useQueryClient } from "@tanstack/react-query";

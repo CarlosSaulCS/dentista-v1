@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch, type UseFormRegisterReturn } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -29,12 +30,21 @@ const defaultValues: PatientFormValues = {
 export function PatientForm({
   onSubmit,
   submitting,
+  initialValues,
+  submitLabel = "Guardar paciente",
 }: {
   onSubmit: (values: PatientFormValues) => Promise<void>;
   submitting?: boolean;
+  initialValues?: Partial<PatientFormValues>;
+  submitLabel?: string;
 }) {
-  const form = useForm<PatientFormValues>({ resolver: zodResolver(patientSchema), defaultValues });
+  const values = useMemo(() => ({ ...defaultValues, ...initialValues }), [initialValues]);
+  const form = useForm<PatientFormValues>({ resolver: zodResolver(patientSchema), defaultValues: values });
   const sex = useWatch({ control: form.control, name: "sex" }) ?? "";
+
+  useEffect(() => {
+    form.reset(values);
+  }, [form, values]);
 
   return (
     <form className="grid gap-4" onSubmit={form.handleSubmit(onSubmit)}>
@@ -80,9 +90,12 @@ export function PatientForm({
         <TextAreaField label="Medicamentos actuales" id="currentMedications" register={form.register("currentMedications")} />
         <TextAreaField label="Antecedentes relevantes" id="relevantHistory" register={form.register("relevantHistory")} />
       </div>
-      <TextAreaField label="Hábitos y notas generales" id="generalNotes" register={form.register("generalNotes")} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextAreaField label="Hábitos" id="habits" register={form.register("habits")} />
+        <TextAreaField label="Notas generales" id="generalNotes" register={form.register("generalNotes")} />
+      </div>
       <Button type="submit" disabled={submitting || form.formState.isSubmitting}>
-        Guardar paciente
+        {submitLabel}
       </Button>
     </form>
   );

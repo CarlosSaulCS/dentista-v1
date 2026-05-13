@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use crate::errors::AppResult;
 use crate::models::{AlertSummary, AppointmentSummary, ChartPoint, DashboardSummary};
 use crate::services::auth_service::validate_session;
-use crate::services::office_service::{get_restock_items, refresh_system_alerts};
+use crate::services::office_service::{get_restock_items, reconcile_system_alerts};
 use crate::utils::today_prefix;
 
 pub async fn get_dashboard_summary(
@@ -12,7 +12,7 @@ pub async fn get_dashboard_summary(
     session_token: &str,
 ) -> AppResult<DashboardSummary> {
     let ctx = validate_session(db, session_token, None).await?;
-    refresh_system_alerts(db, &ctx.clinic_id).await?;
+    reconcile_system_alerts(db, &ctx.clinic_id).await?;
     let today = today_prefix();
     let today_like = format!("{today}%");
     let week_start = (Local::now().date_naive() - Duration::days(6))
@@ -22,7 +22,7 @@ pub async fn get_dashboard_summary(
 
     let appointments_today = count_scalar(
         db,
-        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND starts_at LIKE ?",
+        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND deleted_at IS NULL AND starts_at LIKE ?",
         &ctx.clinic_id,
         &today_like,
     )
@@ -78,7 +78,7 @@ pub async fn get_dashboard_summary(
     .await?;
 
     let low_inventory: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM inventory_items WHERE clinic_id = ? AND active = 1 AND current_quantity <= minimum_stock",
+        "SELECT COUNT(*) FROM inventory_items WHERE clinic_id = ? AND active = 1 AND deleted_at IS NULL AND current_quantity <= minimum_stock",
     )
     .bind(&ctx.clinic_id)
     .fetch_one(db)
@@ -99,13 +99,14 @@ pub async fn get_dashboard_summary(
 
     let upcoming_appointments = sqlx::query_as::<_, AppointmentSummary>(
         r#"
-        SELECT a.id, a.patient_id, p.full_name AS patient_name, a.dentist_user_id,
+        SELECT a.id, a.patient_id, p.full_name AS patient_name, p.phone AS patient_phone,
+               p.whatsapp AS patient_whatsapp, p.email AS patient_email, a.dentist_user_id,
                u.full_name AS dentist_name, a.starts_at, a.ends_at, a.duration_minutes,
                a.reason, a.appointment_type, a.status, a.notes
         FROM appointments a
         JOIN patients p ON p.id = a.patient_id
         LEFT JOIN users u ON u.id = a.dentist_user_id
-        WHERE a.clinic_id = ? AND a.starts_at >= ? AND a.status NOT IN ('cancelada', 'finalizada')
+        WHERE a.clinic_id = ? AND a.deleted_at IS NULL AND a.starts_at >= ? AND a.status NOT IN ('cancelada', 'finalizada')
         ORDER BY a.starts_at
         LIMIT 6
         "#,
@@ -131,7 +132,7 @@ pub async fn get_dashboard_summary(
         r#"
         SELECT status AS label, COUNT(*) AS value
         FROM appointments
-        WHERE clinic_id = ? AND starts_at LIKE ?
+        WHERE clinic_id = ? AND deleted_at IS NULL AND starts_at LIKE ?
         GROUP BY status
         ORDER BY value DESC
         "#,
@@ -199,7 +200,7 @@ async fn count_status(
     status: &str,
 ) -> AppResult<i64> {
     let value = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND starts_at LIKE ? AND status = ?",
+        "SELECT COUNT(*) FROM appointments WHERE clinic_id = ? AND deleted_at IS NULL AND starts_at LIKE ? AND status = ?",
     )
     .bind(clinic_id)
     .bind(day_like)

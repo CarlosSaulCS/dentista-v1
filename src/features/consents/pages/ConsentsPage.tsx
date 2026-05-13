@@ -29,9 +29,18 @@ export function ConsentsPage() {
       const template = templates.data?.find((item) => item.id === templateId);
       if (!patient || !template) throw new Error("Selecciona paciente y plantilla");
       const pdfBytes = await buildConsentPdf(template.name, template.body.replaceAll("{{paciente}}", patient.fullName));
-      return officeApi.savePatientFile(sessionToken, { patientId, categoryName: "Consentimientos", originalName: `${template.name}-${patient.fullName}.pdf`, mimeType: "application/pdf", description: template.name, bytes: Array.from(pdfBytes) });
+      return officeApi.savePatientFile(sessionToken, {
+        patientId,
+        categoryName: "Consentimientos",
+        originalName: `${template.name}-${patient.fullName}.pdf`,
+        mimeType: "application/pdf",
+        description: `Consentimiento informado: ${template.name}`,
+        relatedEntityType: "consent_templates",
+        relatedEntityId: template.id,
+        bytes: Array.from(pdfBytes),
+      });
     },
-    onSuccess: async () => { toast.success("Consentimiento PDF guardado en expediente"); await queryClient.invalidateQueries({ queryKey: ["patient-files"] }); },
+    onSuccess: async () => { toast.success("Consentimiento PDF guardado en documentos del expediente"); await queryClient.invalidateQueries({ queryKey: ["patient-files"] }); },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
   });
   return <div className="space-y-6"><PageHeader title="Consentimientos informados" description="Plantillas locales y generación de PDF en expediente." />

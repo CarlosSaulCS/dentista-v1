@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { save } from "@tauri-apps/plugin-dialog";
 import { FileDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/data/PageHeader";
@@ -24,6 +25,7 @@ export function EstimatesPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(emptyEstimateDraft);
+  const [exportingEstimateId, setExportingEstimateId] = useState<string | null>(null);
   const estimates = useQuery({ queryKey: ["estimates", sessionToken], queryFn: () => officeApi.listEstimates(sessionToken), enabled: Boolean(sessionToken) });
   const patients = useQuery({ queryKey: ["patients", sessionToken, "estimates"], queryFn: () => listPatients(sessionToken, "", 200), enabled: Boolean(sessionToken) });
   const mutation = useMutation({
@@ -52,6 +54,7 @@ export function EstimatesPage() {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["alerts"] });
     },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
   });
 
   const submitEstimate = () => {
@@ -74,6 +77,40 @@ export function EstimatesPage() {
       return;
     }
     mutation.mutate();
+  };
+
+  const exportEstimate = async (estimate: EstimateSummary) => {
+    try {
+      setExportingEstimateId(estimate.id);
+      const items = await officeApi.listEstimateItems(sessionToken, estimate.id);
+      if (items.length === 0) {
+        toast.error("El presupuesto no tiene conceptos para exportar");
+        return;
+      }
+
+      const fileName = `Presupuesto_${safeFileName(estimate.folio)}_${safeFileName(estimate.patientName)}.csv`;
+      const targetPath = await save({
+        defaultPath: fileName,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!targetPath) return;
+
+      const csv = buildEstimateCsv(estimate, items);
+      const bytes = Array.from(new TextEncoder().encode(csv));
+      const result = await officeApi.saveReportFile(sessionToken, {
+        reportType: "estimate",
+        format: "csv",
+        fileName,
+        targetPath,
+        filtersJson: JSON.stringify({ estimateId: estimate.id, folio: estimate.folio }),
+        bytes,
+      });
+      toast.success(`CSV guardado en ${result.path}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExportingEstimateId(null);
+    }
   };
 
   return <div className="space-y-6">
@@ -103,7 +140,7 @@ export function EstimatesPage() {
         <TableCell>{formatCurrency(estimate.totalCents)}</TableCell><TableCell>{estimate.validUntil || "Sin vigencia"}</TableCell>
         <TableCell><StatusBadge status={estimate.status} /></TableCell>
         <TableCell className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => exportEstimate(estimate)}><FileDown className="h-4 w-4" />CSV</Button>
+          <Button variant="outline" size="sm" onClick={() => void exportEstimate(estimate)} disabled={exportingEstimateId === estimate.id}><FileDown className="h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => statusMutation.mutate({ id: estimate.id, status: "approved" })}>Aprobar</Button>
         </TableCell>
       </TableRow>)}</TableBody>
@@ -111,14 +148,75 @@ export function EstimatesPage() {
   </div>;
 }
 
-function exportEstimate(estimate: EstimateSummary) {
-  const csv = `Folio,Paciente,Total,Estado\n${estimate.folio},${estimate.patientName},${estimate.totalCents / 100},${estimate.status}\n`;
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${estimate.folio}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+function buildEstimateCsv(estimate: EstimateSummary, items: Awaited<ReturnType<typeof officeApi.listEstimateItems>>) {
+  const delimiter = ";";
+  const rows = [
+    ["DentalCare Manager - Presupuesto"],
+    [],
+    ["Informacion del presupuesto"],
+    ["Campo", "Valor"],
+    ["Folio", estimate.folio],
+    ["Paciente", estimate.patientName],
+    ["Fecha de emision", formatCsvDate(estimate.createdAt)],
+    ["Vigencia", estimate.validUntil ? formatCsvDate(estimate.validUntil) : "Sin vigencia"],
+    ["Estado", formatStatus(estimate.status)],
+    [],
+    ["Conceptos"],
+    ["No.", "Concepto", "Cantidad", "Precio unitario MXN", "Descuento MXN", "Total MXN"],
+    ...items.map((item, index) => [
+      String(index + 1),
+      item.description,
+      String(item.quantity),
+      centsToCsvAmount(item.unitPriceCents),
+      centsToCsvAmount(item.discountCents),
+      centsToCsvAmount(item.totalCents),
+    ]),
+    [],
+    ["Resumen"],
+    ["Subtotal MXN", centsToCsvAmount(estimate.subtotalCents)],
+    ["Descuento MXN", centsToCsvAmount(estimate.discountCents)],
+    ["Total MXN", centsToCsvAmount(estimate.totalCents)],
+    [],
+    ["Observaciones"],
+    [estimate.observations || "Sin observaciones"],
+    [],
+    ["Terminos"],
+    [estimate.terms || "Sin terminos registrados"],
+    [],
+    ["Generado", new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short" }).format(new Date())],
+  ];
+  return `\uFEFFsep=;\r\n${rows.map((row) => row.map(csvCell).join(delimiter)).join("\r\n")}`;
+}
+
+function centsToCsvAmount(cents: number) {
+  return (cents / 100).toFixed(2);
+}
+
+function csvCell(value: string | number | null | undefined) {
+  const text = String(value ?? "").replace(/\r?\n/g, " ").trim();
+  return `"${text.replaceAll("\"", "\"\"")}"`;
+}
+
+function formatCsvDate(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" }).format(date);
+}
+
+function formatStatus(status: string) {
+  return status.replaceAll("_", " ");
+}
+
+function safeFileName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48) || "presupuesto";
 }
 
 function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {

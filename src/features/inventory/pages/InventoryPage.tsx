@@ -1,9 +1,20 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Edit, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/data/PageHeader";
 import { SelectableCards } from "@/components/data/SelectableCards";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -12,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/api";
-import { officeApi } from "@/lib/office-api";
+import { officeApi, type InventoryItemSummary } from "@/lib/office-api";
 import { useAuthStore } from "@/store/auth-store";
 
 const emptyDraft = {
@@ -47,25 +58,34 @@ export function InventoryPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const [editingItem, setEditingItem] = useState<InventoryItemSummary | null>(null);
   const [movement, setMovement] = useState({ inventoryItemId: "", movementType: "entrada", quantity: "", reason: "" });
   const inventory = useQuery({ queryKey: ["inventory", sessionToken], queryFn: () => officeApi.listInventoryItems(sessionToken), enabled: Boolean(sessionToken) });
   const suppliers = useQuery({ queryKey: ["suppliers", sessionToken], queryFn: () => officeApi.listSuppliers(sessionToken), enabled: Boolean(sessionToken) });
   const mutation = useMutation({
-    mutationFn: () => officeApi.createInventoryItem(sessionToken, {
-      supplierId: draft.supplierId === "none" ? "" : draft.supplierId,
-      name: draft.name,
-      category: effectiveCategory(draft),
-      unit: draft.unit,
-      currentQuantity: Number(draft.quantity || 0),
-      minimumStock: Number(draft.minimum || 0),
-      costCents: Math.round(Number(draft.cost || 0) * 100),
-      expirationDate: draft.expirationMode === "si" ? draft.expiration : "",
-      location: draft.location,
-    }),
+    mutationFn: () => {
+      const input = {
+        supplierId: draft.supplierId === "none" ? "" : draft.supplierId,
+        name: draft.name,
+        category: effectiveCategory(draft),
+        unit: draft.unit,
+        currentQuantity: Number(draft.quantity || 0),
+        minimumStock: Number(draft.minimum || 0),
+        costCents: Math.round(Number(draft.cost || 0) * 100),
+        purchaseDate: "",
+        expirationDate: draft.expirationMode === "si" ? draft.expiration : "",
+        location: draft.location,
+        active: true,
+      };
+      return editingItem
+        ? officeApi.updateInventoryItem(sessionToken, { ...input, id: editingItem.id })
+        : officeApi.createInventoryItem(sessionToken, input);
+    },
     onSuccess: async () => {
-      toast.success("Insumo guardado");
+      toast.success(editingItem ? "Insumo actualizado" : "Insumo guardado");
       setOpen(false);
       setDraft(emptyDraft);
+      setEditingItem(null);
       await invalidateOperationalData(queryClient);
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
@@ -75,6 +95,14 @@ export function InventoryPage() {
     onSuccess: async () => {
       toast.success("Movimiento registrado");
       setMovement({ inventoryItemId: "", movementType: "entrada", quantity: "", reason: "" });
+      await invalidateOperationalData(queryClient);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (inventoryItemId: string) => officeApi.softDeleteInventoryItem(sessionToken, inventoryItemId),
+    onSuccess: async () => {
+      toast.success("Insumo dado de baja");
       await invalidateOperationalData(queryClient);
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
@@ -126,12 +154,12 @@ export function InventoryPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Inventario dental" description="Control local de insumos, stock mínimo y caducidad opcional." actions={
-      <Dialog open={open} onOpenChange={(value) => { setOpen(value); if (!value) setDraft(emptyDraft); }}>
+      <Dialog open={open} onOpenChange={(value) => { setOpen(value); if (!value) { setDraft(emptyDraft); setEditingItem(null); } }}>
         <DialogTrigger asChild><Button><Plus className="h-4 w-4" />Nuevo insumo</Button></DialogTrigger>
         <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto p-0">
           <div className="border-b px-6 py-5">
             <DialogHeader>
-              <DialogTitle>Nuevo insumo</DialogTitle>
+              <DialogTitle>{editingItem ? "Editar insumo" : "Nuevo insumo"}</DialogTitle>
               <DialogDescription>Registra solo lo necesario; proveedor, costo, ubicación y caducidad pueden quedar vacíos.</DialogDescription>
             </DialogHeader>
           </div>
@@ -175,7 +203,7 @@ export function InventoryPage() {
             {draft.expirationMode === "si" ? (
               <Field label="Fecha de caducidad" value={draft.expiration} onChange={(expiration) => setDraft({ ...draft, expiration })} type="date" />
             ) : null}
-            <Button type="submit" disabled={mutation.isPending}>Guardar insumo</Button>
+            <Button type="submit" disabled={mutation.isPending}>{editingItem ? "Actualizar insumo" : "Guardar insumo"}</Button>
           </form>
         </DialogContent>
       </Dialog>
@@ -203,11 +231,39 @@ export function InventoryPage() {
       </CardContent>
     </Card>
     <Card><CardContent className="overflow-x-auto p-0"><Table>
-      <TableHeader><TableRow><TableHead>Insumo</TableHead><TableHead>Categoría</TableHead><TableHead>Stock</TableHead><TableHead>Costo</TableHead><TableHead>Proveedor</TableHead><TableHead>Caducidad</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>Insumo</TableHead><TableHead>Categoría</TableHead><TableHead>Stock</TableHead><TableHead>Costo</TableHead><TableHead>Proveedor</TableHead><TableHead>Caducidad</TableHead><TableHead>Acciones</TableHead></TableRow></TableHeader>
       <TableBody>{(inventory.data ?? []).length === 0 ? (
-        <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No hay insumos registrados.</TableCell></TableRow>
+        <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No hay insumos registrados.</TableCell></TableRow>
       ) : (inventory.data ?? []).map((item) => <TableRow key={item.id} className={item.currentQuantity <= item.minimumStock ? "bg-amber-50" : ""}>
         <TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.category}</TableCell><TableCell>{item.currentQuantity} / min {item.minimumStock} {item.unit}</TableCell><TableCell>{formatCurrency(item.costCents)}</TableCell><TableCell>{item.supplierName ?? "Sin proveedor"}</TableCell><TableCell>{item.expirationDate ?? "No aplica"}</TableCell>
+        <TableCell>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setEditingItem(item); setDraft(draftFromItem(item)); setOpen(true); }}>
+              <Edit className="h-4 w-4" />
+              Editar
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Trash2 className="h-4 w-4" />
+                  Baja
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Dar de baja {item.name}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    El insumo quedará fuera de inventario activo sin borrarse físicamente.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => deleteMutation.mutate(item.id)}>Confirmar baja</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </TableCell>
       </TableRow>)}</TableBody>
     </Table></CardContent></Card>
   </div>;
@@ -215,6 +271,23 @@ export function InventoryPage() {
 
 function effectiveCategory(draft: typeof emptyDraft) {
   return draft.category === "Otro" ? draft.customCategory : draft.category;
+}
+
+function draftFromItem(item: InventoryItemSummary): typeof emptyDraft {
+  const knownCategory = inventoryCategories.includes(item.category);
+  return {
+    name: item.name,
+    category: knownCategory ? item.category : "Otro",
+    customCategory: knownCategory ? "" : item.category,
+    unit: item.unit,
+    quantity: String(item.currentQuantity),
+    minimum: String(item.minimumStock),
+    cost: String(item.costCents / 100),
+    expirationMode: item.expirationDate ? "si" : "no",
+    expiration: item.expirationDate ?? "",
+    location: item.location ?? "",
+    supplierId: item.supplierId ?? "none",
+  };
 }
 
 async function invalidateOperationalData(queryClient: ReturnType<typeof useQueryClient>) {
