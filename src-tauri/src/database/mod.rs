@@ -6,6 +6,8 @@ use sqlx::{ConnectOptions, SqlitePool};
 use tauri::{AppHandle, Manager};
 
 use crate::errors::AppResult;
+use crate::services::backup_service;
+use crate::utils::{new_id, now_utc};
 
 pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -38,6 +40,9 @@ pub async fn init(app: &AppHandle) -> AppResult<AppState> {
     fs::create_dir_all(&backups_dir)?;
     fs::create_dir_all(&reports_dir)?;
 
+    let restore_applied =
+        backup_service::apply_pending_restore_if_needed(&app_data_dir, &data_dir, &files_dir)?;
+
     let db_path = data_dir.join("dentalcare.sqlite");
     let options = SqliteConnectOptions::new()
         .filename(&db_path)
@@ -58,6 +63,9 @@ pub async fn init(app: &AppHandle) -> AppResult<AppState> {
         .execute(&pool)
         .await?;
     MIGRATOR.run(&pool).await?;
+    if let Some(metadata) = restore_applied {
+        record_restore_applied(&pool, metadata).await?;
+    }
 
     Ok(AppState {
         db: pool,
@@ -66,6 +74,27 @@ pub async fn init(app: &AppHandle) -> AppResult<AppState> {
         backups_dir,
         reports_dir,
     })
+}
+
+async fn record_restore_applied(pool: &SqlitePool, metadata: serde_json::Value) -> AppResult<()> {
+    let clinic_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM clinics ORDER BY created_at LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO audit_logs
+          (id, clinic_id, user_id, action, entity_type, entity_id, severity, metadata, created_at)
+        VALUES (?, ?, NULL, 'restore.applied', 'restore_jobs', NULL, 'security', ?, ?)
+        "#,
+    )
+    .bind(new_id())
+    .bind(clinic_id)
+    .bind(metadata.to_string())
+    .bind(now_utc())
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

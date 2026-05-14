@@ -1,6 +1,8 @@
 # DentalCare Manager
 
-Sistema Integral para Consultorio Dental construido como aplicación de escritorio local-first para Windows.
+Sistema integral para consultorio dental construido como aplicación local-first de escritorio para Windows.
+
+Esta fase mantiene el producto local: Tauri 2, Rust, React, TypeScript, SQLite y SQLx. No integra todavía la web principal, Neon, Stripe, R2 ni Code Solutions Studio.
 
 ## Stack
 
@@ -10,70 +12,155 @@ Sistema Integral para Consultorio Dental construido como aplicación de escritor
 - SQLite + SQLx + migraciones versionadas
 - TanStack Query, TanStack Table, Zustand, React Hook Form, Zod, Recharts
 
-## Comandos
+## Instalación Y Desarrollo
 
 ```bash
 npm install
 npm run tauri:dev
-npm run tauri:build
+```
+
+Validación local:
+
+```bash
 npm run typecheck
 npm run lint
+npm run build
 cd src-tauri && cargo test
 ```
 
-## Build Generado
+Empaquetado:
 
-Después de `npm run tauri:build`, los instaladores quedan en:
+```bash
+npm run tauri:build
+```
+
+Después del build, los instaladores quedan en:
 
 - `src-tauri/target/release/bundle/msi/`
 - `src-tauri/target/release/bundle/nsis/`
 
-## Almacenamiento Local
+## Rutas De Datos
 
-La aplicación usa rutas de datos administradas por Tauri:
+La aplicación usa rutas administradas por Tauri:
 
 - Base SQLite: `%APPDATA%/DentalCare Manager/data/dentalcare.sqlite`
 - Archivos clínicos: `%APPDATA%/DentalCare Manager/files/`
 - Respaldos: `Documents/DentalCare Backups/`
+- Reportes exportados: directorio elegido por el usuario desde diálogo local
 
-## Seguridad V1
-
-- Primer arranque con asistente para crear consultorio y administrador.
-- No hay credenciales por defecto.
-- Contraseñas con Argon2id.
-- Sesiones locales con token hasheado en base de datos.
-- Permisos por rol y validación por comando Tauri.
-- Auditoría de acciones críticas.
-- Registros clínicos diseñados para trazabilidad, no borrado destructivo.
-
-## Módulos Implementados En Esta Base
+## Módulos
 
 - Setup inicial del consultorio.
 - Login local.
 - Dashboard con datos reales de SQLite.
-- Pacientes.
-- Agenda diaria y cambios de estado.
+- Pacientes y baja lógica.
+- Agenda diaria, conflictos y cambios de estado.
 - Historia clínica y evoluciones.
 - Odontograma por pieza dental con historial.
 - Periodontograma base por paciente.
 - Catálogo de tratamientos.
 - Planes de tratamiento.
-- Presupuestos con folio y exportación CSV.
-- Pagos y abonos con folio.
-- Caja con apertura, entradas por pago y cierre.
-- Inventario dental y proveedores.
-- Archivos clínicos guardados localmente.
-- Consentimientos con plantillas y PDF al expediente.
+- Presupuestos.
+- Pagos y abonos.
+- Caja.
+- Inventario y proveedores.
+- Archivos clínicos locales.
+- Consentimientos.
 - Alertas.
-- Reportes con exportación CSV/Excel.
+- Reportes y exportaciones.
 - Usuarios y roles.
-- Configuración del consultorio y plantillas de mensajes.
-- Respaldos ZIP de base de datos y archivos.
+- Configuración del consultorio.
+- Respaldos, verificación y restauración staged.
 
-Los módulos siguen siendo local-first: no dependen de internet ni de servicios cloud.
+## Licencia Local
+
+La licencia local soporta estados de prueba, activo, gracia, suspendido, expirado y sólo lectura. Si la licencia vence, la app no bloquea el acceso a datos: permite consultar, exportar y crear respaldos, pero bloquea escrituras y restauraciones.
+
+La activación hardcodeada en login fue retirada. La integración real de suscripción queda documentada para una fase futura.
+
+Ver: `docs/licensing-roadmap.md`.
+
+## Backups
+
+Los respaldos se generan como ZIP verificable:
+
+```text
+manifest.json
+checksums.sha256
+data/dentalcare.sqlite
+files/
+metadata/system-info.json
+```
+
+El sistema guarda historial, tamaño, checksum, conteos de tablas, versión de app, versión de migración y estado de verificación. También puede crear respaldo automático diario al iniciar sesión si el último respaldo completado tiene más de 24 horas.
+
+Ver: `docs/backups-and-restore.md`.
+
+## Restore
+
+La restauración usa flujo staged:
+
+1. Verificar ZIP.
+2. Mostrar preview.
+3. Crear respaldo de seguridad.
+4. Copiar ZIP a `restore-pending`.
+5. Aplicar al siguiente arranque antes de abrir SQLite.
+6. Registrar auditoría.
+
+No se sobrescribe la base activa directamente desde la UI.
+
+Ver: `docs/restore-procedure.md`.
+
+## Seguridad
+
+- CSP no nulo en Tauri.
+- Capabilities reducidas.
+- Contraseñas con Argon2id.
+- Sesiones hasheadas y expirables.
+- `sessionToken` no persistido en Zustand.
+- Permisos por comando.
+- `AccessIntent` para bloquear escrituras en modo sólo lectura.
+- Validación de rutas y nombres de archivo.
+- Límite de 100 MB para archivos clínicos.
+- Auditoría de acciones críticas.
+
+Ver: `docs/security-hardening.md` y `docs/clinical-data-privacy.md`.
+
+## Documentación Técnica
+
+- `docs/licensing-roadmap.md`
+- `docs/backups-and-restore.md`
+- `docs/restore-procedure.md`
+- `docs/security-hardening.md`
+- `docs/clinical-data-privacy.md`
+- `docs/files-to-r2-migration.md`
+- `docs/saas-migration-plan.md`
+- `docs/sqlite-to-postgres-map.md`
+- `docs/api-contracts-future.md`
+
+## Roadmap SaaS
+
+La base queda preparada para una migración futura:
+
+- licencia remota y suscripción;
+- endpoints HTTP por dominio;
+- PostgreSQL/Neon;
+- archivos en Cloudflare R2;
+- Stripe en backend SaaS;
+- integración posterior con Code Solutions Studio.
+
+Nada de eso está conectado en esta fase.
+
+## Limitaciones Actuales
+
+- Cifrado de respaldos preparado como interfaz, no implementado.
+- Restauración completa requiere reinicio controlado.
+- Suscripción remota no conectada.
+- Purga automática de retención pendiente.
+- SaaS, Neon, Stripe y R2 sólo están documentados.
 
 ## Notas De Uso
 
-Si ya creaste el administrador y vuelves a ver el asistente inicial, usa el nuevo build: detecta la base existente y cambia a login. En una instalación existente, inicia sesión con el usuario y contraseña que creaste en el primer arranque.
+Si ya creaste el administrador y vuelves a ver el asistente inicial, usa el build actual: detecta la base existente y cambia a login. En una instalación existente, inicia sesión con el usuario y contraseña creados en el primer arranque.
 
 El ejecutable release generado por `npm run tauri:build` está compilado como aplicación Windows GUI y no abre una consola. Si ejecutas binarios debug o procesos lanzados desde consola, Windows puede mantener esa consola asociada al proceso.

@@ -5,10 +5,33 @@ export type BootstrapStatus = {
 };
 
 export type LicenseStatus = {
-  status: "not_configured" | "trial_active" | "expired" | "licensed" | string;
+  status:
+    | "not_configured"
+    | "trial_active"
+    | "active"
+    | "grace_period"
+    | "past_due"
+    | "suspended"
+    | "read_only"
+    | "expired"
+    | "offline_grace"
+    | "licensed"
+    | string;
+  accessMode: string;
+  canWrite: boolean;
+  message: string;
   trialStartedAt?: string | null;
   trialEndsAt?: string | null;
   activatedAt?: string | null;
+  lastCheckAt?: string | null;
+  nextCheckAt?: string | null;
+  deviceId?: string | null;
+  installationId?: string | null;
+  clinicId?: string | null;
+  customerId?: string | null;
+  subscriptionId?: string | null;
+  planCode?: string | null;
+  planLimits?: Record<string, unknown> | null;
   daysRemaining: number;
   isTrialActive: boolean;
   isExpired: boolean;

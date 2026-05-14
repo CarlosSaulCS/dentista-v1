@@ -7,7 +7,8 @@ use crate::models::{
     CreateClinicalRecordInput,
 };
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc};
 
 pub async fn create_clinical_record(
@@ -15,7 +16,13 @@ pub async fn create_clinical_record(
     session_token: &str,
     input: CreateClinicalRecordInput,
 ) -> AppResult<ClinicalRecordSummary> {
-    let ctx = validate_session(db, session_token, Some("clinical.edit")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("clinical.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() {
         return Err(AppError::Validation(
             "El paciente es obligatorio".to_string(),
@@ -80,7 +87,13 @@ pub async fn create_clinical_evolution(
     session_token: &str,
     input: CreateClinicalEvolutionInput,
 ) -> AppResult<ClinicalEvolutionSummary> {
-    let ctx = validate_session(db, session_token, Some("clinical.edit")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("clinical.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() || input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "Paciente y motivo son obligatorios".to_string(),

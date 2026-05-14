@@ -9,7 +9,8 @@ use crate::errors::{AppError, AppResult};
 use crate::models::*;
 use crate::security::hash_password;
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, normalize_search, now_utc};
 
 pub async fn list_treatments(
@@ -36,7 +37,13 @@ pub async fn create_treatment(
     session_token: &str,
     input: CreateTreatmentInput,
 ) -> AppResult<TreatmentCatalogItem> {
-    let ctx = validate_session(db, session_token, Some("treatments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("treatments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.name.trim().is_empty() || input.category.trim().is_empty() {
         return Err(AppError::Validation(
             "Nombre y categoría son obligatorios".to_string(),
@@ -99,7 +106,13 @@ pub async fn update_treatment(
     session_token: &str,
     input: UpdateTreatmentInput,
 ) -> AppResult<TreatmentCatalogItem> {
-    let ctx = validate_session(db, session_token, Some("treatments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("treatments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un tratamiento para editar".to_string(),
@@ -203,7 +216,13 @@ pub async fn create_treatment_plan(
     session_token: &str,
     input: CreateTreatmentPlanInput,
 ) -> AppResult<TreatmentPlanSummary> {
-    let ctx = validate_session(db, session_token, Some("treatments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("treatments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() {
         return Err(AppError::Validation("Selecciona un paciente".to_string()));
     }
@@ -352,7 +371,13 @@ pub async fn create_estimate(
     session_token: &str,
     input: CreateEstimateInput,
 ) -> AppResult<EstimateSummary> {
-    let ctx = validate_session(db, session_token, Some("treatments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("treatments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() || input.items.is_empty() {
         return Err(AppError::Validation(
             "Paciente y conceptos son obligatorios".to_string(),
@@ -459,7 +484,13 @@ pub async fn update_estimate_status(
     session_token: &str,
     input: UpdateStatusInput,
 ) -> AppResult<EstimateSummary> {
-    let ctx = validate_session(db, session_token, Some("treatments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("treatments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     let now = now_utc();
     sqlx::query("UPDATE estimates SET status = ?, updated_at = ? WHERE clinic_id = ? AND id = ?")
         .bind(&input.status)
@@ -536,7 +567,13 @@ pub async fn register_payment(
     session_token: &str,
     input: RegisterPaymentInput,
 ) -> AppResult<PaymentSummary> {
-    let ctx = validate_session(db, session_token, Some("payments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("payments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty()
         || input.concept.trim().is_empty()
         || input.amount_cents <= 0
@@ -652,7 +689,13 @@ pub async fn open_cash_register(
     session_token: &str,
     input: OpenCashRegisterInput,
 ) -> AppResult<CashRegisterSummary> {
-    let ctx = validate_session(db, session_token, Some("payments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("payments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if get_current_cash_register(db, session_token)
         .await?
         .is_some()
@@ -690,7 +733,13 @@ pub async fn close_cash_register(
     session_token: &str,
     input: CloseCashRegisterInput,
 ) -> AppResult<CashClosureResult> {
-    let ctx = validate_session(db, session_token, Some("reports.financial")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("reports.financial"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     let register = get_cash_register_by_id(db, &ctx.clinic_id, &input.cash_register_id).await?;
     let expected = register.opening_float_cents + register.total_cash_cents;
     let difference = input.counted_cash_cents - expected;
@@ -754,7 +803,7 @@ pub async fn create_supplier(
     session_token: &str,
     input: CreateSupplierInput,
 ) -> AppResult<SupplierSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation(
             "El proveedor requiere nombre".to_string(),
@@ -805,7 +854,7 @@ pub async fn create_inventory_item(
     session_token: &str,
     input: CreateInventoryItemInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if input.name.trim().is_empty()
         || input.category.trim().is_empty()
         || input.unit.trim().is_empty()
@@ -879,7 +928,7 @@ pub async fn update_inventory_item(
     session_token: &str,
     input: UpdateInventoryItemInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if input.id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un insumo para editar".to_string(),
@@ -974,7 +1023,7 @@ pub async fn soft_delete_inventory_item(
     session_token: &str,
     inventory_item_id: &str,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if inventory_item_id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un insumo para dar de baja".to_string(),
@@ -1017,7 +1066,7 @@ pub async fn create_inventory_movement(
     session_token: &str,
     input: CreateInventoryMovementInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if input.inventory_item_id.trim().is_empty() || input.quantity <= 0.0 {
         return Err(AppError::Validation(
             "Insumo y cantidad son obligatorios".to_string(),
@@ -1090,7 +1139,13 @@ pub async fn create_alert(
     session_token: &str,
     input: CreateAlertInput,
 ) -> AppResult<AlertSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("alerts.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.title.trim().is_empty() || input.message.trim().is_empty() {
         return Err(AppError::Validation(
             "Título y mensaje son obligatorios".to_string(),
@@ -1120,7 +1175,13 @@ pub async fn resolve_alert(
     session_token: &str,
     id: &str,
 ) -> AppResult<AlertSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("alerts.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     let now = now_utc();
     sqlx::query(
         "UPDATE alerts SET status = 'resolved', resolved_at = ? WHERE clinic_id = ? AND id = ?",
@@ -1143,13 +1204,29 @@ pub async fn save_patient_file(
     } else {
         Some("patients.edit")
     };
-    let ctx = validate_session(&state.db, session_token, required_permission).await?;
+    let ctx = validate_session_for_intent(
+        &state.db,
+        session_token,
+        required_permission,
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty()
         || input.original_name.trim().is_empty()
         || input.bytes.is_empty()
     {
         return Err(AppError::Validation(
             "Paciente y archivo son obligatorios".to_string(),
+        ));
+    }
+    if input.bytes.len() > 100 * 1024 * 1024 {
+        return Err(AppError::Validation(
+            "El archivo excede el límite de 100 MB".to_string(),
+        ));
+    }
+    if !is_allowed_clinical_file(input.mime_type.as_deref(), &input.original_name) {
+        return Err(AppError::Validation(
+            "Tipo de archivo clínico no permitido".to_string(),
         ));
     }
     let category_id = ensure_file_category(&state.db, &input.category_name).await?;
@@ -1234,6 +1311,34 @@ pub async fn save_patient_file(
     get_file_by_id(&state.db, &ctx.clinic_id, &file_id).await
 }
 
+fn is_allowed_clinical_file(mime_type: Option<&str>, original_name: &str) -> bool {
+    let extension = original_name
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let extension_allowed = matches!(
+        extension.as_str(),
+        "pdf" | "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" | "csv" | "xlsx"
+    );
+    let mime_allowed = mime_type
+        .map(|mime| {
+            matches!(
+                mime,
+                "application/pdf"
+                    | "image/png"
+                    | "image/jpeg"
+                    | "image/webp"
+                    | "image/bmp"
+                    | "image/tiff"
+                    | "text/csv"
+                    | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        })
+        .unwrap_or(true);
+    extension_allowed && mime_allowed
+}
+
 pub async fn list_patient_files(
     db: &SqlitePool,
     session_token: &str,
@@ -1295,7 +1400,7 @@ pub async fn open_patient_file(
 pub async fn open_external_url(db: &SqlitePool, session_token: &str, url: &str) -> AppResult<()> {
     let _ctx = validate_session(db, session_token, None).await?;
     let clean_url = url.trim();
-    let allowed = clean_url.starts_with("mailto:") || clean_url.starts_with("https://wa.me/");
+    let allowed = is_allowed_external_url(clean_url);
     if !allowed {
         return Err(AppError::Validation(
             "Enlace externo no permitido".to_string(),
@@ -1304,6 +1409,27 @@ pub async fn open_external_url(db: &SqlitePool, session_token: &str, url: &str) 
     tauri_plugin_opener::open_url(clean_url, None::<&str>)
         .map_err(|error| AppError::Validation(format!("No se pudo abrir el enlace: {error}")))?;
     Ok(())
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    if url.is_empty()
+        || url.contains(char::is_whitespace)
+        || url.contains('\\')
+        || url.contains('%')
+    {
+        return false;
+    }
+    if let Some(address) = url.strip_prefix("mailto:") {
+        return address.contains('@') && !address.contains('/') && !address.contains(':');
+    }
+    if let Some(value) = url.strip_prefix("https://wa.me/") {
+        return value
+            .split('?')
+            .next()
+            .map(|phone| phone.chars().all(|ch| ch.is_ascii_digit()) && phone.len() >= 8)
+            .unwrap_or(false);
+    }
+    false
 }
 
 pub async fn list_consent_templates(
@@ -1325,7 +1451,7 @@ pub async fn create_consent_template(
     session_token: &str,
     input: CreateConsentTemplateInput,
 ) -> AppResult<ConsentTemplateSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
     if input.name.trim().is_empty() || input.body.trim().is_empty() {
         return Err(AppError::Validation(
             "Nombre y cuerpo son obligatorios".to_string(),
@@ -1456,7 +1582,13 @@ pub async fn update_clinic_settings(
     session_token: &str,
     input: UpdateClinicSettingsInput,
 ) -> AppResult<ClinicSummary> {
-    let ctx = validate_session(db, session_token, None).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("settings.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation(
             "El nombre del consultorio es obligatorio".to_string(),
@@ -1627,7 +1759,13 @@ pub async fn create_user(
     session_token: &str,
     input: CreateUserInput,
 ) -> AppResult<UserListItem> {
-    let ctx = validate_session(db, session_token, Some("users.admin")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("users.admin"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.full_name.trim().is_empty()
         || input.username.trim().is_empty()
         || input.role_id.trim().is_empty()
@@ -1701,7 +1839,13 @@ pub async fn create_periodontal_record(
     session_token: &str,
     input: CreatePeriodontalRecordInput,
 ) -> AppResult<PeriodontalRecordSummary> {
-    let ctx = validate_session(db, session_token, Some("clinical.edit")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("clinical.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() {
         return Err(AppError::Validation("Selecciona un paciente".to_string()));
     }

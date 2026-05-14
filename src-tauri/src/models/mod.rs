@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 
 #[derive(Debug, Serialize, FromRow)]
@@ -25,9 +26,21 @@ pub struct BootstrapStatus {
 #[serde(rename_all = "camelCase")]
 pub struct LicenseStatus {
     pub status: String,
+    pub access_mode: String,
+    pub can_write: bool,
+    pub message: String,
     pub trial_started_at: Option<String>,
     pub trial_ends_at: Option<String>,
     pub activated_at: Option<String>,
+    pub last_check_at: Option<String>,
+    pub next_check_at: Option<String>,
+    pub device_id: Option<String>,
+    pub installation_id: Option<String>,
+    pub clinic_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub subscription_id: Option<String>,
+    pub plan_code: Option<String>,
+    pub plan_limits: Option<Value>,
     pub days_remaining: i64,
     pub is_trial_active: bool,
     pub is_expired: bool,
@@ -363,6 +376,94 @@ pub struct BackupResult {
     pub path: String,
     pub size_bytes: u64,
     pub created_at: String,
+    pub checksum_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSummary {
+    pub id: String,
+    pub path: String,
+    pub status: String,
+    pub backup_type: String,
+    pub size_bytes: i64,
+    pub checksum_sha256: Option<String>,
+    pub verification_status: Option<String>,
+    pub verified_at: Option<String>,
+    pub app_version: Option<String>,
+    pub migration_version: Option<i64>,
+    pub file_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSettings {
+    pub automatic_enabled: bool,
+    pub frequency: String,
+    pub include_files: bool,
+    pub encrypt_backups: bool,
+    pub retention_limit: i64,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBackupSettingsInput {
+    pub automatic_enabled: bool,
+    pub frequency: String,
+    pub include_files: bool,
+    pub encrypt_backups: bool,
+    pub retention_limit: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupManifest {
+    pub backup_id: String,
+    pub clinic_id: Option<String>,
+    pub created_at: String,
+    pub app_version: String,
+    pub database_version: String,
+    pub migration_version: i64,
+    pub includes: Vec<String>,
+    pub table_counts: Value,
+    pub file_count: i64,
+    pub checksum: Value,
+    pub compression: String,
+    pub encrypted: bool,
+    pub created_by_user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupVerificationResult {
+    pub valid: bool,
+    pub path: String,
+    pub backup_id: Option<String>,
+    pub archive_checksum_sha256: Option<String>,
+    pub manifest: Option<BackupManifest>,
+    pub checked_files: i64,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePreview {
+    pub valid: bool,
+    pub source_path: String,
+    pub manifest: Option<BackupManifest>,
+    pub summary: Value,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePrepareResult {
+    pub restore_job_id: String,
+    pub staged_path: String,
+    pub safety_backup_path: String,
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize)]

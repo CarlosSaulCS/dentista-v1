@@ -1,13 +1,19 @@
-use sqlx::sqlite::SqlitePoolOptions;
+use std::fs;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-use crate::database::MIGRATOR;
+use crate::database::{AppState, MIGRATOR};
 use crate::models::{
     CreateAppointmentInput, CreateInventoryItemInput, CreateInventoryMovementInput,
     CreatePatientInput, ListAppointmentsInput, ListPatientsInput, LoginInput, SetupInput,
     UpdateAppointmentInput, UpdateInventoryItemInput, UpdatePatientInput,
 };
-use crate::services::{appointment_service, auth_service, office_service, patient_service};
+use crate::services::{
+    appointment_service, auth_service, backup_service, license_service, office_service,
+    patient_service,
+};
+use crate::utils::new_id;
 
 async fn test_pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -73,7 +79,7 @@ async fn create_patient(pool: &SqlitePool, session_token: &str) -> String {
 }
 
 #[tokio::test]
-async fn expired_trial_blocks_normal_login_and_activation_unlocks_access() {
+async fn expired_trial_allows_read_only_and_dev_activation_unlocks_writes() {
     let pool = test_pool().await;
     let session_token = test_session(&pool).await;
 
@@ -84,7 +90,7 @@ async fn expired_trial_blocks_normal_login_and_activation_unlocks_access() {
     .await
     .expect("expire trial");
 
-    let blocked_login = auth_service::login(
+    let read_only_login = auth_service::login(
         &pool,
         LoginInput {
             username: "admin".to_string(),
@@ -92,10 +98,11 @@ async fn expired_trial_blocks_normal_login_and_activation_unlocks_access() {
         },
     )
     .await
-    .expect_err("expired trial blocks normal password");
-    assert!(blocked_login.to_string().contains("prueba de 30 días"));
+    .expect("expired trial allows normal login in read-only mode");
+    assert!(!read_only_login.license.can_write);
+    assert_eq!(read_only_login.license.access_mode, "read_only");
 
-    let blocked_session = patient_service::list_patients(
+    patient_service::list_patients(
         &pool,
         &session_token,
         ListPatientsInput {
@@ -104,21 +111,39 @@ async fn expired_trial_blocks_normal_login_and_activation_unlocks_access() {
         },
     )
     .await
-    .expect_err("expired trial blocks existing sessions");
-    assert!(blocked_session.to_string().contains("prueba de 30 días"));
+    .expect("expired trial allows reads");
 
-    let activated = auth_service::login(
+    let blocked_write = patient_service::create_patient(
         &pool,
-        LoginInput {
-            username: "admin".to_string(),
-            password: "Casc+10098".to_string(),
+        &session_token,
+        CreatePatientInput {
+            full_name: "Paciente Bloqueado".to_string(),
+            birth_date: None,
+            sex: None,
+            phone: Some("5553334444".to_string()),
+            whatsapp: None,
+            email: None,
+            address: None,
+            emergency_contact_name: None,
+            emergency_contact_phone: None,
+            occupation: None,
+            allergies: None,
+            systemic_diseases: None,
+            current_medications: None,
+            relevant_history: None,
+            habits: None,
+            general_notes: None,
         },
     )
     .await
-    .expect("activation key unlocks system");
-    assert!(activated.license.is_licensed);
+    .expect_err("expired trial blocks writes");
+    assert!(blocked_write.to_string().contains("solo lectura"));
 
-    auth_service::login(
+    license_service::dev_activate_legacy_local_license(&pool, None)
+        .await
+        .expect("dev activation unlocks local writes");
+
+    let activated = auth_service::login(
         &pool,
         LoginInput {
             username: "admin".to_string(),
@@ -127,6 +152,7 @@ async fn expired_trial_blocks_normal_login_and_activation_unlocks_access() {
     )
     .await
     .expect("normal user password works after activation");
+    assert!(activated.license.can_write);
 }
 
 #[tokio::test]
@@ -260,7 +286,8 @@ async fn appointments_can_be_created_updated_statused_and_soft_deleted() {
     )
     .await
     .expect("list appointments after delete");
-    assert!(listed_after_delete.is_empty());
+    assert_eq!(listed_after_delete.len(), 1);
+    assert_eq!(listed_after_delete[0].status, "cancelada");
 }
 
 #[tokio::test]
@@ -331,4 +358,60 @@ async fn inventory_items_can_be_created_updated_moved_and_soft_deleted() {
         .await
         .expect("list inventory after delete");
     assert!(active_items.is_empty());
+}
+
+#[tokio::test]
+async fn backup_creates_verifiable_zip_with_manifest_and_checksums() {
+    let root = std::env::temp_dir().join(format!("dentalcare-backup-test-{}", new_id()));
+    fs::create_dir_all(&root).expect("create test root");
+    let db_path = root.join("test.sqlite");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .expect("connect file sqlite");
+    MIGRATOR.run(&pool).await.expect("run migrations");
+    let session_token = test_session(&pool).await;
+    let patient_id = create_patient(&pool, &session_token).await;
+    let app_data_dir = root.join("app");
+    let files_dir = app_data_dir.join("files");
+    let backups_dir = root.join("backups");
+    let reports_dir = root.join("reports");
+    let patient_dir = files_dir.join(&patient_id).join("Radiografias");
+    fs::create_dir_all(&patient_dir).expect("create patient file dir");
+    fs::write(patient_dir.join("rx.pdf"), b"PDF test").expect("write patient file");
+
+    let state = AppState {
+        db: pool,
+        app_data_dir,
+        files_dir,
+        backups_dir,
+        reports_dir,
+    };
+
+    let backup = backup_service::create_backup(&state, &session_token)
+        .await
+        .expect("create backup");
+    assert!(backup.path.ends_with(".zip"));
+    assert!(backup.checksum_sha256.is_some());
+
+    let verification = backup_service::verify_backup(&state, &session_token, &backup.path)
+        .await
+        .expect("verify backup");
+    assert!(verification.valid, "{:?}", verification.errors);
+    assert_eq!(
+        verification
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.backup_id.as_str()),
+        Some(backup.id.as_str())
+    );
+    assert!(verification.checked_files >= 3);
+
+    let _ = fs::remove_dir_all(root);
 }

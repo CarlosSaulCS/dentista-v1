@@ -8,7 +8,8 @@ use crate::models::{
     UpdateAppointmentStatusInput,
 };
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc, today_prefix};
 
 pub async fn create_appointment(
@@ -16,7 +17,13 @@ pub async fn create_appointment(
     session_token: &str,
     input: CreateAppointmentInput,
 ) -> AppResult<AppointmentSummary> {
-    let ctx = validate_session(db, session_token, Some("appointments.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("appointments.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty() || input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "Paciente y motivo son obligatorios".to_string(),
@@ -187,7 +194,13 @@ pub async fn update_appointment(
     } else {
         "appointments.reschedule"
     };
-    let ctx = validate_session(db, session_token, Some(required_permission)).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some(required_permission),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.id.trim().is_empty()
         || input.patient_id.trim().is_empty()
         || input.reason.trim().is_empty()
@@ -201,6 +214,7 @@ pub async fn update_appointment(
             "La duración debe estar entre 5 y 480 minutos".to_string(),
         ));
     }
+    ensure_valid_appointment_status(input.status.trim())?;
 
     let previous_status: String = sqlx::query_scalar(
         "SELECT status FROM appointments WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
@@ -300,7 +314,14 @@ pub async fn update_appointment_status(
     } else {
         "appointments.create"
     };
-    let ctx = validate_session(db, session_token, Some(required_permission)).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some(required_permission),
+        AccessIntent::DataWrite,
+    )
+    .await?;
+    ensure_valid_appointment_status(input.status.trim())?;
 
     let previous_status: String = sqlx::query_scalar(
         "SELECT status FROM appointments WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
@@ -354,7 +375,13 @@ pub async fn soft_delete_appointment(
     session_token: &str,
     appointment_id: &str,
 ) -> AppResult<AppointmentSummary> {
-    let ctx = validate_session(db, session_token, Some("appointments.cancel")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("appointments.cancel"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if appointment_id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona una cita para eliminar".to_string(),
@@ -363,9 +390,8 @@ pub async fn soft_delete_appointment(
     let appointment = get_appointment_by_id(db, &ctx.clinic_id, appointment_id).await?;
     let now = now_utc();
     sqlx::query(
-        "UPDATE appointments SET status = 'cancelada', deleted_at = ?, deleted_by_user_id = ?, cancelled_at = COALESCE(cancelled_at, ?), updated_at = ? WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
+        "UPDATE appointments SET status = 'cancelada', deleted_by_user_id = ?, cancelled_at = COALESCE(cancelled_at, ?), updated_at = ? WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
     )
-    .bind(&now)
     .bind(&ctx.user_id)
     .bind(&now)
     .bind(&now)
@@ -463,6 +489,24 @@ fn parse_local_datetime(value: &str) -> AppResult<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M"))
         .map_err(|_| AppError::Validation("Fecha y hora de cita inválidas".to_string()))
+}
+
+fn ensure_valid_appointment_status(status: &str) -> AppResult<()> {
+    if matches!(
+        status,
+        "programada"
+            | "confirmada"
+            | "en_espera"
+            | "en_consulta"
+            | "finalizada"
+            | "cancelada"
+            | "no_asistio"
+    ) {
+        return Ok(());
+    }
+    Err(AppError::Validation(
+        "Estado de cita no soportado".to_string(),
+    ))
 }
 
 async fn ensure_no_conflicting_appointment(

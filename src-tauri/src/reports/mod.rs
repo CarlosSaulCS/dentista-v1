@@ -13,7 +13,8 @@ use crate::database::AppState;
 use crate::errors::{AppError, AppResult};
 use crate::models::{ReportExportResult, SaveReportFileInput};
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::validate_session_for_intent;
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc};
 
 pub async fn save_report_file(
@@ -21,7 +22,13 @@ pub async fn save_report_file(
     session_token: &str,
     input: SaveReportFileInput,
 ) -> AppResult<ReportExportResult> {
-    let ctx = validate_session(&state.db, session_token, Some("reports.financial")).await?;
+    let ctx = validate_session_for_intent(
+        &state.db,
+        session_token,
+        Some("reports.financial"),
+        AccessIntent::ExportOrBackup,
+    )
+    .await?;
     if input.bytes.is_empty() {
         return Err(AppError::Validation(
             "El reporte no contiene datos para guardar".to_string(),

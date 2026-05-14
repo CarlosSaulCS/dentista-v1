@@ -34,9 +34,12 @@ export function SettingsPage() {
   });
   return <div className="space-y-6"><PageHeader title="Configuración" description="Datos locales del consultorio, folios y plantillas." />
     {license ? <Card><CardHeader><CardTitle>Licencia local</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
-      <p className="font-medium">{license.isLicensed ? "Sistema activado" : license.requiresActivation ? "Prueba finalizada" : "Prueba activa"}</p>
+      <p className="font-medium">{license.canWrite ? "Operación completa" : "Modo sólo lectura"} · {license.status.replaceAll("_", " ")}</p>
+      <p className="text-muted-foreground">{license.message}</p>
       {!license.isLicensed && license.trialEndsAt ? <p className="text-muted-foreground">Vigencia de prueba: {formatLicenseDate(license.trialEndsAt)}. Días restantes: {license.daysRemaining}.</p> : null}
       {license.isLicensed && license.activatedAt ? <p className="text-muted-foreground">Activado el {formatLicenseDate(license.activatedAt)}.</p> : null}
+      {license.nextCheckAt ? <p className="text-muted-foreground">Próxima validación preparada: {formatLicenseDate(license.nextCheckAt)}.</p> : null}
+      {license.installationId ? <p className="break-all text-xs text-muted-foreground">Instalación: {license.installationId}</p> : null}
     </CardContent></Card> : null}
     <Card><CardHeader><CardTitle>Consultorio</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2">
       <Field label="Nombre" value={draft.name || clinic?.name || ""} onChange={(name) => setDraft({ ...draft, name })} />

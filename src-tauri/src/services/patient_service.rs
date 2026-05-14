@@ -4,7 +4,8 @@ use sqlx::SqlitePool;
 use crate::errors::{AppError, AppResult};
 use crate::models::{CreatePatientInput, ListPatientsInput, PatientSummary, UpdatePatientInput};
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, normalize_search, now_utc};
 
 pub async fn create_patient(
@@ -12,12 +13,27 @@ pub async fn create_patient(
     session_token: &str,
     input: CreatePatientInput,
 ) -> AppResult<PatientSummary> {
-    let ctx = validate_session(db, session_token, Some("patients.create")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("patients.create"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.full_name.trim().is_empty() {
         return Err(AppError::Validation(
             "El nombre completo del paciente es obligatorio".to_string(),
         ));
     }
+    ensure_no_duplicate_patient(
+        db,
+        &ctx.clinic_id,
+        &input.full_name,
+        input.phone.as_deref(),
+        input.email.as_deref(),
+        None,
+    )
+    .await?;
 
     let id = new_id();
     let now = now_utc();
@@ -120,7 +136,13 @@ pub async fn update_patient(
     session_token: &str,
     input: UpdatePatientInput,
 ) -> AppResult<PatientSummary> {
-    let ctx = validate_session(db, session_token, Some("patients.edit")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("patients.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un paciente para editar".to_string(),
@@ -131,6 +153,15 @@ pub async fn update_patient(
             "El nombre completo del paciente es obligatorio".to_string(),
         ));
     }
+    ensure_no_duplicate_patient(
+        db,
+        &ctx.clinic_id,
+        &input.full_name,
+        input.phone.as_deref(),
+        input.email.as_deref(),
+        Some(input.id.trim()),
+    )
+    .await?;
 
     let now = now_utc();
     let result = sqlx::query(
@@ -190,12 +221,61 @@ pub async fn update_patient(
     get_patient_by_id(db, &ctx.clinic_id, input.id.trim()).await
 }
 
+async fn ensure_no_duplicate_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    full_name: &str,
+    phone: Option<&str>,
+    email: Option<&str>,
+    except_id: Option<&str>,
+) -> AppResult<()> {
+    let normalized_name = full_name.trim().to_lowercase();
+    let phone = phone.map(str::trim).filter(|value| !value.is_empty());
+    let email = email.map(str::trim).filter(|value| !value.is_empty());
+    if phone.is_none() && email.is_none() {
+        return Ok(());
+    }
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM patients
+        WHERE clinic_id = ?
+          AND deleted_at IS NULL
+          AND lower(full_name) = ?
+          AND (? IS NULL OR id <> ?)
+          AND ((? IS NOT NULL AND phone = ?) OR (? IS NOT NULL AND email = ?))
+        "#,
+    )
+    .bind(clinic_id)
+    .bind(normalized_name)
+    .bind(except_id)
+    .bind(except_id)
+    .bind(phone)
+    .bind(phone)
+    .bind(email)
+    .bind(email)
+    .fetch_one(db)
+    .await?;
+    if count > 0 {
+        return Err(AppError::Validation(
+            "Ya existe un paciente activo con el mismo nombre y contacto".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn soft_delete_patient(
     db: &SqlitePool,
     session_token: &str,
     patient_id: &str,
 ) -> AppResult<PatientSummary> {
-    let ctx = validate_session(db, session_token, Some("patients.delete")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("patients.delete"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if patient_id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un paciente para dar de baja".to_string(),

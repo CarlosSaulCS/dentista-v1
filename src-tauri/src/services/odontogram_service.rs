@@ -4,7 +4,8 @@ use sqlx::SqlitePool;
 use crate::errors::{AppError, AppResult};
 use crate::models::{OdontogramEntry, OdontogramRecordView, UpsertOdontogramEntryInput};
 use crate::services::audit_service::log_action;
-use crate::services::auth_service::validate_session;
+use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc};
 
 pub async fn get_odontogram(
@@ -62,7 +63,13 @@ pub async fn upsert_odontogram_entry(
     session_token: &str,
     input: UpsertOdontogramEntryInput,
 ) -> AppResult<OdontogramRecordView> {
-    let ctx = validate_session(db, session_token, Some("odontogram.edit")).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("odontogram.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.patient_id.trim().is_empty()
         || input.tooth_number.trim().is_empty()
         || input.state.trim().is_empty()

@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { AuthSession, UserProfile } from "@/types/shared";
+import type { AuthSession, LicenseStatus, UserProfile } from "@/types/shared";
 
 type AuthState = {
   sessionToken: string | null;
   expiresAt: string | null;
   user: UserProfile | null;
   permissions: string[];
+  license: LicenseStatus | null;
   locked: boolean;
   setSession: (session: AuthSession) => void;
   clearSession: () => void;
@@ -22,6 +23,7 @@ export const useAuthStore = create<AuthState>()(
       expiresAt: null,
       user: null,
       permissions: [],
+      license: null,
       locked: false,
       setSession: (session) =>
         set({
@@ -29,6 +31,7 @@ export const useAuthStore = create<AuthState>()(
           expiresAt: session.expiresAt,
           user: session.user,
           permissions: session.permissions,
+          license: session.license,
           locked: false,
         }),
       clearSession: () =>
@@ -37,6 +40,7 @@ export const useAuthStore = create<AuthState>()(
           expiresAt: null,
           user: null,
           permissions: [],
+          license: null,
           locked: false,
         }),
       lock: () => set({ locked: true }),
@@ -46,10 +50,9 @@ export const useAuthStore = create<AuthState>()(
     {
       name: "dentalcare-auth",
       partialize: (state) => ({
-        sessionToken: state.sessionToken,
-        expiresAt: state.expiresAt,
         user: state.user,
         permissions: state.permissions,
+        license: state.license,
         locked: state.locked,
       }),
     },

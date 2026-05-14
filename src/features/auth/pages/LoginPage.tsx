@@ -61,9 +61,9 @@ export function LoginPage({ license }: { license?: LicenseStatus }) {
             <Button type="submit" disabled={form.formState.isSubmitting}>
               Entrar
             </Button>
-            {license?.requiresActivation ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                La prueba terminó. Ingresa tu usuario y la clave de activación en el campo contraseña para habilitar el sistema.
+            {license && !license.canWrite ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                {license.message}
               </div>
             ) : null}
           </form>
@@ -75,8 +75,8 @@ export function LoginPage({ license }: { license?: LicenseStatus }) {
 
 function licenseDescription(license?: LicenseStatus) {
   if (!license) return "Sistema Integral para Consultorio Dental";
-  if (license.isLicensed) return "Sistema activado para operación completa";
-  if (license.requiresActivation) return "Prueba de 30 días finalizada";
+  if (!license.canWrite) return "Modo sólo lectura disponible";
+  if (license.status === "active" || license.isLicensed) return "Sistema activado para operación completa";
   if (license.isTrialActive) {
     return `Prueba activa: ${license.daysRemaining} día${license.daysRemaining === 1 ? "" : "s"} restante${license.daysRemaining === 1 ? "" : "s"}`;
   }

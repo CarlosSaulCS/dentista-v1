@@ -10,6 +10,8 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("Compresión: {0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("JSON: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("Configuración de la aplicación: {0}")]
     Tauri(#[from] tauri::Error),
     #[error("No autorizado")]
