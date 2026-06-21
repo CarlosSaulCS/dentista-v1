@@ -286,8 +286,16 @@ async fn appointments_can_be_created_updated_statused_and_soft_deleted() {
     )
     .await
     .expect("list appointments after delete");
-    assert_eq!(listed_after_delete.len(), 1);
-    assert_eq!(listed_after_delete[0].status, "cancelada");
+    assert_eq!(listed_after_delete.len(), 0);
+
+    let deleted_status: (String, Option<String>) =
+        sqlx::query_as("SELECT status, deleted_at FROM appointments WHERE id = ?")
+            .bind(&appointment.id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch soft deleted appointment");
+    assert_eq!(deleted_status.0, "cancelada");
+    assert!(deleted_status.1.is_some());
 }
 
 #[tokio::test]
