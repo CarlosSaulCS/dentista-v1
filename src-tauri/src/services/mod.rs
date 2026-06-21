@@ -8,6 +8,7 @@ pub mod license_service;
 pub mod odontogram_service;
 pub mod office_service;
 pub mod patient_service;
+pub mod sync_service;
 
 #[cfg(test)]
 mod hardening_tests;

@@ -8,3 +8,4 @@ pub mod odontogram;
 pub mod office;
 pub mod patients;
 pub mod reports;
+pub mod sync;
