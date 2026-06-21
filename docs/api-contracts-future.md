@@ -70,6 +70,22 @@ Estados válidos:
 - `cancelada`
 - `no_asistio`
 
+## Sync Local Dental
+
+```http
+POST /api/dental/local-sync/register-installation
+POST /api/dental/local-sync/refresh
+POST /api/dental/local-sync/push
+GET /api/dental/local-sync/pull
+POST /api/dental/local-sync/ack
+GET /api/dental/mobile/appointments
+POST /api/dental/mobile/appointments/:id/confirm
+POST /api/dental/mobile/appointments/:id/cancel
+```
+
+El portal trabaja con `dental_appointment_projections` y `dental_remote_commands`.
+No confirma ni cancela una cita hasta recibir `ack` aplicado desde la instalación local.
+
 ## Expediente Clínico
 
 ```http

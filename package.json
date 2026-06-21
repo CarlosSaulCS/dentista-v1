@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "release:windows": "npm run build && tauri build --bundles nsis,msi",
+    "release:manifest:windows": "powershell -ExecutionPolicy Bypass -File scripts/create-tauri-update-manifest.ps1"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
