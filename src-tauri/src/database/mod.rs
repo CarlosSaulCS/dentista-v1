@@ -151,6 +151,12 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("license table exists");
+        let sync_tables_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('sync_outbox', 'sync_inbox', 'sync_cursor', 'sync_device_tokens', 'remote_command_receipts')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("sync tables exist");
 
         assert!(permissions_count >= 10);
         assert_eq!(patients_table, 1);
@@ -158,5 +164,6 @@ mod tests {
         assert_eq!(alert_state_table, 1);
         assert_eq!(report_export_columns, 2);
         assert_eq!(license_table, 1);
+        assert_eq!(sync_tables_count, 5);
     }
 }
