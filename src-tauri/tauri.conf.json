@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "DentalCare Manager",
+  "productName": "Dentista v1 Professional",
   "version": "0.1.0",
   "identifier": "com.dentalcare.manager",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "DentalCare Manager",
+        "title": "Dentista v1 Professional",
         "width": 1440,
         "height": 900,
         "minWidth": 1180,
@@ -27,5 +27,16 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "endpoints": [
+        "https://releases.codesolutionstudio.com.mx/dentista-v1/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

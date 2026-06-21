@@ -70,6 +70,25 @@ Estados válidos:
 - `cancelada`
 - `no_asistio`
 
+## Dentista v1 Bridge Independiente
+
+```http
+POST /api/dv1/register-installation
+POST /api/dv1/sync/refresh
+POST /api/dv1/sync/push
+GET /api/dv1/sync/pull
+POST /api/dv1/sync/ack
+GET /api/dv1/mobile/appointments
+POST /api/dv1/mobile/appointments/:id/confirm
+POST /api/dv1/mobile/appointments/:id/cancel
+```
+
+Estos endpoints pertenecen a un bridge/portal independiente de Dentista v1, no al SaaS dental
+existente de `css-aion-new`. El bridge trabaja con proyecciones propias y comandos remotos
+propios; no debe depender de `dental_clinics`, `dental_members`, `dental_quotes` ni de las tablas
+productivas del SaaS actual. No confirma ni cancela una cita hasta recibir `ack` aplicado desde la
+instalación local.
+
 ## Expediente Clínico
 
 ```http

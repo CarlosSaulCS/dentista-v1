@@ -216,7 +216,7 @@ pub struct UpdateAppointmentStatusInput {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppointmentSummary {
     pub id: String,
@@ -963,4 +963,98 @@ pub struct PeriodontalRecordSummary {
     pub notes: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterInstallationInput {
+    pub portal_base_url: Option<String>,
+    pub pairing_code: Option<String>,
+    pub device_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokeLocalDeviceInput {
+    pub device_id: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, FromRow, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDeviceSummary {
+    pub id: String,
+    pub installation_id: String,
+    pub device_id: String,
+    pub device_label: Option<String>,
+    pub portal_base_url: Option<String>,
+    pub status: String,
+    pub last_registered_at: Option<String>,
+    pub last_refreshed_at: Option<String>,
+    pub last_sync_at: Option<String>,
+    pub last_error: Option<String>,
+    pub revoked_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub configured: bool,
+    pub active_device: Option<SyncDeviceSummary>,
+    pub devices: Vec<SyncDeviceSummary>,
+    pub pending_outbox: i64,
+    pub failed_outbox: i64,
+    pub pending_inbox: i64,
+    pub pending_receipts: i64,
+    pub pull_cursor: Option<String>,
+    pub last_sync_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterInstallationResult {
+    pub status: SyncStatus,
+    pub installation_id: String,
+    pub device_id: String,
+    pub paired: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRunResult {
+    pub pushed_events: i64,
+    pub applied_commands: i64,
+    pub failed_commands: i64,
+    pub acked_receipts: i64,
+    pub status: SyncStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCommandRequestedBy {
+    pub user_id: Option<String>,
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAppointmentStatusCommand {
+    pub command_type: String,
+    pub command_id: String,
+    pub clinic_id: Option<String>,
+    pub appointment_id: String,
+    pub payload: Value,
+    pub requested_by: Option<RemoteCommandRequestedBy>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCommandApplyResult {
+    pub command_id: String,
+    pub appointment_id: String,
+    pub status: String,
+    pub applied_at: Option<String>,
+    pub message: Option<String>,
 }

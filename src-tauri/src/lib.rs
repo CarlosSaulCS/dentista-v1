@@ -40,6 +40,9 @@ use commands::{
     },
     patients::{create_patient, get_patient, list_patients, soft_delete_patient, update_patient},
     reports::save_report_file,
+    sync::{
+        get_sync_status, refresh_sync_token, register_installation, revoke_local_device, sync_now,
+    },
 };
 use tauri::Manager;
 
@@ -47,6 +50,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = tauri::async_runtime::block_on(database::init(app.handle()))?;
             app.manage(state);
@@ -123,7 +127,12 @@ pub fn run() {
             list_roles,
             create_user,
             list_periodontal_records,
-            create_periodontal_record
+            create_periodontal_record,
+            register_installation,
+            refresh_sync_token,
+            sync_now,
+            get_sync_status,
+            revoke_local_device
         ])
         .run(tauri::generate_context!())
         .expect("error while running DentalCare Manager");
