@@ -29,7 +29,7 @@ export interface SyncStatus {
 }
 
 export interface RegisterInstallationInput {
-  portalBaseUrl: string;
+  portalBaseUrl?: string | null;
   pairingCode?: string;
   deviceLabel?: string;
 }

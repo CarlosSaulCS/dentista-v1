@@ -968,7 +968,7 @@ pub struct PeriodontalRecordSummary {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterInstallationInput {
-    pub portal_base_url: String,
+    pub portal_base_url: Option<String>,
     pub pairing_code: Option<String>,
     pub device_label: Option<String>,
 }

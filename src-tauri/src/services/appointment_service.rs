@@ -476,7 +476,7 @@ pub async fn apply_remote_appointment_status(
         },
         "appointments.remote_status_applied",
         json!({
-            "source": "portal",
+            "source": "dv1_bridge",
             "commandId": command.command_id.clone(),
             "commandType": command.command_type.clone(),
             "requestedBy": command.requested_by.clone()

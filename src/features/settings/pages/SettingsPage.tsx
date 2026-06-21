@@ -100,7 +100,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Configuración" description="Datos locales del consultorio, licencia, conectividad y plantillas." />
+      <PageHeader title="Configuración" description="Datos locales del consultorio, licencia, portal remoto y plantillas." />
 
       {license ? (
         <Card>
@@ -130,7 +130,7 @@ export function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Conectividad</CardTitle>
+          <CardTitle>Portal remoto</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-5">
           <div className="grid gap-3 md:grid-cols-4">
@@ -149,9 +149,9 @@ export function SettingsPage() {
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
             <div className="grid gap-3 md:grid-cols-3">
               <Field
-                label="URL del portal"
+                label="URL del bridge DV1"
                 value={syncDraft.portalBaseUrl}
-                placeholder={activeDevice?.portalBaseUrl ?? "https://..."}
+                placeholder={activeDevice?.portalBaseUrl ?? "DV1_SYNC_BASE_URL o https://..."}
                 onChange={(portalBaseUrl) => setSyncDraft({ ...syncDraft, portalBaseUrl })}
               />
               <Field
@@ -187,7 +187,7 @@ export function SettingsPage() {
               <TableRow>
                 <TableHead>Dispositivo</TableHead>
                 <TableHead>Estado</TableHead>
-                <TableHead>Portal</TableHead>
+                <TableHead>Bridge DV1</TableHead>
                 <TableHead>Último sync</TableHead>
                 <TableHead className="w-[80px]" />
               </TableRow>
@@ -202,7 +202,7 @@ export function SettingsPage() {
                   <TableCell>
                     <Badge variant={device.status === "active" ? "default" : "outline"}>{statusLabel(device.status)}</Badge>
                   </TableCell>
-                  <TableCell className="max-w-[260px] truncate">{device.portalBaseUrl ?? "Sin portal"}</TableCell>
+                  <TableCell className="max-w-[260px] truncate">{device.portalBaseUrl ?? "Sin bridge"}</TableCell>
                   <TableCell>{device.lastSyncAt ? formatDateTime(device.lastSyncAt) : "Pendiente"}</TableCell>
                   <TableCell>
                     <Button

@@ -14,7 +14,8 @@ use crate::services::auth_service::{validate_session, validate_session_for_inten
 use crate::services::license_service::{self, AccessIntent};
 use crate::utils::{new_id, now_utc};
 
-const SYNC_API_PREFIX: &str = "/api/dental/local-sync";
+const DV1_BRIDGE_API_PREFIX: &str = "/api/dv1";
+const DV1_SYNC_BASE_URL_ENV: &str = "DV1_SYNC_BASE_URL";
 const MAX_OUTBOX_ATTEMPTS: i64 = 5;
 
 #[derive(Debug, FromRow, Clone)]
@@ -153,7 +154,7 @@ pub async fn register_installation(
         AccessIntent::DataWrite,
     )
     .await?;
-    let portal_base_url = normalize_portal_base_url(&input.portal_base_url)?;
+    let portal_base_url = resolve_bridge_base_url(input.portal_base_url.as_deref())?;
     let (installation_id, device_id) = ensure_local_device_ids(db, &ctx.clinic_id).await?;
     let label = input
         .device_label
@@ -178,7 +179,7 @@ pub async fn register_installation(
     let mut final_device_id = device_id.clone();
 
     if let Some(code) = pairing_code {
-        let response = register_with_portal(
+        let response = register_with_bridge(
             &portal_base_url,
             RegisterInstallationRequest {
                 pairing_code: code,
@@ -248,7 +249,7 @@ pub async fn register_installation(
         "security",
         Some(json!({
             "paired": paired,
-            "portalBaseUrl": portal_base_url,
+            "bridgeBaseUrl": portal_base_url,
             "installationId": final_installation_id
         })),
     )
@@ -495,16 +496,37 @@ pub async fn record_failed_remote_command(
     Ok(())
 }
 
-fn normalize_portal_base_url(value: &str) -> AppResult<String> {
+fn resolve_bridge_base_url(value: Option<&str>) -> AppResult<String> {
+    let configured = value
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(DV1_SYNC_BASE_URL_ENV)
+                .ok()
+                .map(|candidate| candidate.trim().to_string())
+                .filter(|candidate| !candidate.is_empty())
+        });
+
+    let Some(configured) = configured else {
+        return Err(AppError::Validation(format!(
+            "Configura la URL del bridge DV1 en Portal remoto o con {DV1_SYNC_BASE_URL_ENV}"
+        )));
+    };
+
+    normalize_bridge_base_url(&configured)
+}
+
+fn normalize_bridge_base_url(value: &str) -> AppResult<String> {
     let trimmed = value.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(AppError::Validation(
-            "Configura la URL del portal de sincronización".to_string(),
+            "Configura la URL del bridge DV1".to_string(),
         ));
     }
     if !(trimmed.starts_with("https://") || trimmed.starts_with("http://localhost")) {
         return Err(AppError::Validation(
-            "La URL del portal debe usar HTTPS, salvo localhost para desarrollo".to_string(),
+            "La URL del bridge DV1 debe usar HTTPS, salvo localhost para desarrollo".to_string(),
         ));
     }
     Ok(trimmed.to_string())
@@ -534,12 +556,12 @@ async fn ensure_local_device_ids(db: &SqlitePool, clinic_id: &str) -> AppResult<
     Ok((installation_id, device_id))
 }
 
-async fn register_with_portal(
-    portal_base_url: &str,
+async fn register_with_bridge(
+    bridge_base_url: &str,
     payload: RegisterInstallationRequest<'_>,
 ) -> AppResult<RegisterInstallationResponse> {
     let response = Client::new()
-        .post(endpoint(portal_base_url, "/register-installation"))
+        .post(endpoint(bridge_base_url, "/register-installation"))
         .json(&payload)
         .send()
         .await
@@ -552,14 +574,14 @@ async fn refresh_device_token(
     device: &SyncDeviceRecord,
 ) -> AppResult<SyncDeviceRecord> {
     let portal_base_url = device.portal_base_url.as_deref().ok_or_else(|| {
-        AppError::Validation("El dispositivo no tiene portal configurado".to_string())
+        AppError::Validation("El dispositivo no tiene bridge DV1 configurado".to_string())
     })?;
     let refresh_token = device
         .refresh_token
         .as_deref()
         .ok_or_else(|| AppError::Validation("El dispositivo no tiene refresh token".to_string()))?;
     let response = Client::new()
-        .post(endpoint(portal_base_url, "/refresh"))
+        .post(endpoint(portal_base_url, "/sync/refresh"))
         .json(&RefreshTokenRequest {
             installation_id: &device.installation_id,
             device_id: &device.device_id,
@@ -651,10 +673,10 @@ async fn push_outbox(db: &SqlitePool, device: &SyncDeviceRecord) -> AppResult<i6
         })
         .collect::<Vec<_>>();
 
-    let portal_base_url = required_portal_base_url(device)?;
+    let portal_base_url = required_bridge_base_url(device)?;
     let access_token = required_access_token(device)?;
     let response = Client::new()
-        .post(endpoint(portal_base_url, "/push"))
+        .post(endpoint(portal_base_url, "/sync/push"))
         .bearer_auth(access_token)
         .json(&PushRequest { events })
         .send()
@@ -684,7 +706,7 @@ async fn push_outbox(db: &SqlitePool, device: &SyncDeviceRecord) -> AppResult<i6
                 r#"
                 UPDATE sync_outbox
                 SET status = CASE WHEN attempts >= ? THEN 'dead' ELSE 'failed' END,
-                    error_message = 'El portal no aceptó el evento',
+                    error_message = 'El bridge DV1 no aceptó el evento',
                     updated_at = ?
                 WHERE id = ?
                 "#,
@@ -704,11 +726,11 @@ async fn pull_and_apply_commands(
     db: &SqlitePool,
     device: &SyncDeviceRecord,
 ) -> AppResult<(i64, i64)> {
-    let portal_base_url = required_portal_base_url(device)?;
+    let portal_base_url = required_bridge_base_url(device)?;
     let access_token = required_access_token(device)?;
     let cursor = get_cursor(db, &device.clinic_id, "remote_commands").await?;
     let mut request = Client::new()
-        .get(endpoint(portal_base_url, "/pull"))
+        .get(endpoint(portal_base_url, "/sync/pull"))
         .bearer_auth(access_token);
     if let Some(cursor_value) = cursor.as_deref() {
         request = request.query(&[("cursor", cursor_value)]);
@@ -765,10 +787,10 @@ async fn ack_remote_receipts(db: &SqlitePool, device: &SyncDeviceRecord) -> AppR
             applied_at: row.applied_at.clone(),
         })
         .collect::<Vec<_>>();
-    let portal_base_url = required_portal_base_url(device)?;
+    let portal_base_url = required_bridge_base_url(device)?;
     let access_token = required_access_token(device)?;
     let response = Client::new()
-        .post(endpoint(portal_base_url, "/ack"))
+        .post(endpoint(portal_base_url, "/sync/ack"))
         .bearer_auth(access_token)
         .json(&AckRequest { receipts })
         .send()
@@ -942,13 +964,13 @@ async fn remember_device_error(
     Ok(())
 }
 
-fn required_portal_base_url(device: &SyncDeviceRecord) -> AppResult<&str> {
+fn required_bridge_base_url(device: &SyncDeviceRecord) -> AppResult<&str> {
     device
         .portal_base_url
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
-            AppError::Validation("El dispositivo no tiene portal configurado".to_string())
+            AppError::Validation("El dispositivo no tiene bridge DV1 configurado".to_string())
         })
 }
 
@@ -960,8 +982,8 @@ fn required_access_token(device: &SyncDeviceRecord) -> AppResult<&str> {
         .ok_or_else(|| AppError::Validation("El dispositivo no tiene token activo".to_string()))
 }
 
-fn endpoint(portal_base_url: &str, path: &str) -> String {
-    format!("{portal_base_url}{SYNC_API_PREFIX}{path}")
+fn endpoint(bridge_base_url: &str, path: &str) -> String {
+    format!("{bridge_base_url}{DV1_BRIDGE_API_PREFIX}{path}")
 }
 
 async fn read_remote_json<T: for<'de> Deserialize<'de>>(
@@ -971,7 +993,7 @@ async fn read_remote_json<T: for<'de> Deserialize<'de>>(
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         let summary = body.chars().take(240).collect::<String>();
-        let message = format!("Portal de sincronización respondió {status}: {summary}");
+        let message = format!("Bridge DV1 respondió {status}: {summary}");
         if status.as_u16() == 401 || status.as_u16() == 403 {
             return Err(AppError::Unauthorized);
         }
@@ -981,9 +1003,7 @@ async fn read_remote_json<T: for<'de> Deserialize<'de>>(
 }
 
 fn remote_request_error(error: reqwest::Error) -> AppError {
-    AppError::Conflict(format!(
-        "No se pudo conectar con el portal de sincronización: {error}"
-    ))
+    AppError::Conflict(format!("No se pudo conectar con el bridge DV1: {error}"))
 }
 
 fn is_auth_error(error: &AppError) -> bool {
