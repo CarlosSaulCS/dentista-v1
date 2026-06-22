@@ -35,6 +35,9 @@ La URL base puede venir de Configuración > Portal remoto o de la variable de en
 `DV1_SYNC_BASE_URL`. Si no hay URL ni dispositivo activo, la app local sigue funcionando; solo las
 acciones de sincronización devuelven un error de configuración.
 
+En la UI estos errores se presentan como advertencias. No deben impedir setup, login, dashboard,
+pacientes, citas, caja, pagos, reportes, respaldos ni configuración local.
+
 ## Endpoints Esperados
 
 ```http
