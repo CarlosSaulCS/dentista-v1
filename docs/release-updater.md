@@ -20,6 +20,10 @@ La app usa `tauri-plugin-updater` con manifest estático:
 
 La llave privada de firma no debe guardarse en el repositorio. Genera el par de llaves con la CLI de Tauri, guarda la privada en un secreto del pipeline y pega la llave pública en `src-tauri/tauri.conf.json` en `plugins.updater.pubkey`.
 
+Mientras `plugins.updater.pubkey` tenga `REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY`, el updater queda
+como integración preparada, no como canal productivo. No agregar botones de actualización ni publicar
+un `latest.json` real hasta tener llave pública, firma del instalador y endpoint final validados.
+
 ## Build Windows
 
 ```powershell

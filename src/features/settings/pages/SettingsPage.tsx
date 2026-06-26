@@ -55,7 +55,7 @@ export function SettingsPage() {
       toast.success("Configuración guardada");
       await queryClient.invalidateQueries({ queryKey: ["bootstrap-status"] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+    onError: showSyncWarning,
   });
 
   const registerMutation = useMutation({
@@ -65,7 +65,7 @@ export function SettingsPage() {
       setSyncDraft((current) => ({ ...current, pairingCode: "" }));
       await queryClient.invalidateQueries({ queryKey: ["sync-status", sessionToken] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+    onError: showSyncWarning,
   });
 
   const runSyncMutation = useMutation({
@@ -74,7 +74,7 @@ export function SettingsPage() {
       toast.success(`Sync: ${result.pushedEvents} eventos, ${result.appliedCommands} comandos`);
       await queryClient.invalidateQueries({ queryKey: ["sync-status", sessionToken] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+    onError: showSyncWarning,
   });
 
   const refreshMutation = useMutation({
@@ -83,7 +83,7 @@ export function SettingsPage() {
       toast.success("Token actualizado");
       await queryClient.invalidateQueries({ queryKey: ["sync-status", sessionToken] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+    onError: showSyncWarning,
   });
 
   const revokeMutation = useMutation({
@@ -133,6 +133,11 @@ export function SettingsPage() {
           <CardTitle>Portal remoto</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-5">
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            La conexión al Bridge DV1 es opcional. Dentista v1 trabaja localmente aunque no exista
+            portal remoto, no haya internet o el bridge esté fuera de línea.
+          </div>
+
           <div className="grid gap-3 md:grid-cols-4">
             <SyncMetric label="Estado" value={activeDevice ? statusLabel(activeDevice.status) : "Sin vínculo"} />
             <SyncMetric label="Última sincronización" value={currentSync?.lastSyncAt ? formatDateTime(currentSync.lastSyncAt) : "Pendiente"} />
@@ -314,4 +319,8 @@ function statusLabel(status: SyncDeviceSummary["status"]) {
   if (status === "revoked") return "Revocado";
   if (status === "error") return "Error";
   return status;
+}
+
+function showSyncWarning(error: unknown) {
+  toast.warning(error instanceof Error ? error.message : String(error));
 }

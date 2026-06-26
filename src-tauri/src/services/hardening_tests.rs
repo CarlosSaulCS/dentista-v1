@@ -80,7 +80,20 @@ async fn create_patient(pool: &SqlitePool, session_token: &str) -> String {
 
 #[tokio::test]
 async fn expired_trial_allows_read_only_and_dev_activation_unlocks_writes() {
-    let pool = test_pool().await;
+    let root = std::env::temp_dir().join(format!("dv1-readonly-license-{}", new_id()));
+    fs::create_dir_all(&root).expect("create readonly test root");
+    let db_path = root.join("readonly.sqlite");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .expect("connect readonly file sqlite");
+    MIGRATOR.run(&pool).await.expect("run migrations");
     let session_token = test_session(&pool).await;
 
     sqlx::query(
@@ -137,7 +150,22 @@ async fn expired_trial_allows_read_only_and_dev_activation_unlocks_writes() {
     )
     .await
     .expect_err("expired trial blocks writes");
-    assert!(blocked_write.to_string().contains("solo lectura"));
+    assert!(blocked_write.to_string().contains("lectura"));
+
+    let state = AppState {
+        db: pool.clone(),
+        app_data_dir: root.join("app"),
+        files_dir: root.join("app").join("files"),
+        backups_dir: root.join("backups"),
+        reports_dir: root.join("reports"),
+    };
+    let backup = backup_service::create_backup(&state, &session_token)
+        .await
+        .expect("read-only license still allows manual backup");
+    let verification = backup_service::verify_backup(&state, &session_token, &backup.path)
+        .await
+        .expect("read-only license still allows backup verification");
+    assert!(verification.valid, "{:?}", verification.errors);
 
     license_service::dev_activate_legacy_local_license(&pool, None)
         .await
@@ -153,6 +181,9 @@ async fn expired_trial_allows_read_only_and_dev_activation_unlocks_writes() {
     .await
     .expect("normal user password works after activation");
     assert!(activated.license.can_write);
+
+    drop(pool);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]

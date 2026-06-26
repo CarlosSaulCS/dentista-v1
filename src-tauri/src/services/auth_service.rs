@@ -227,6 +227,7 @@ pub async fn setup_clinic_and_admin(db: &SqlitePool, input: SetupInput) -> AppRe
                 "patients.edit",
                 "clinical.view",
                 "clinical.edit",
+                "files.manage",
                 "odontogram.view",
                 "odontogram.edit",
                 "appointments.create",

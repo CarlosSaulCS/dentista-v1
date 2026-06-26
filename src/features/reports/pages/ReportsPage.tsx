@@ -243,7 +243,7 @@ function buildSummaryRows(data: ReportsSummary): SummaryRow[] {
 function buildCsv(data: ReportsSummary, rows: SummaryRow[], mode: ReportMode, dateFrom: string, dateTo: string) {
   const sections = mode === "operativo"
     ? [
-        ["DentalCare Manager", "Reporte operativo"],
+        ["Dentista v1 Professional", "Reporte operativo"],
         ["Periodo", `${dateFrom} a ${dateTo}`],
         [],
         ["Métrica", "Valor"],
@@ -258,7 +258,7 @@ function buildCsv(data: ReportsSummary, rows: SummaryRow[], mode: ReportMode, da
         ...data.appointmentsByStatus.map((item) => [item.label, String(item.value)]),
       ]
     : [
-        ["DentalCare Manager", "Reporte de resurtido de material e insumos"],
+        ["Dentista v1 Professional", "Reporte de resurtido de material e insumos"],
         ["Periodo", `${dateFrom} a ${dateTo}`],
         [],
         ["Insumo", "Categoría", "Existencia", "Mínimo", "Sugerido", "Costo estimado", "Proveedor", "Caducidad", "Ubicación"],
@@ -271,7 +271,7 @@ async function buildXlsxBlob(data: ReportsSummary, rows: SummaryRow[], mode: Rep
   const title = mode === "operativo" ? "Reporte operativo" : "Reporte de resurtido de material e insumos";
   const sheetRows: XlsxCell[][] = mode === "operativo"
     ? [
-        headerRow("DentalCare Manager", title),
+        headerRow("Dentista v1 Professional", title),
         [{ value: "Periodo", fontWeight: "bold" }, { value: `${dateFrom} a ${dateTo}` }],
         blankRow(),
         sectionRow("Resumen"),
@@ -287,7 +287,7 @@ async function buildXlsxBlob(data: ReportsSummary, rows: SummaryRow[], mode: Rep
         ...data.appointmentsByStatus.map((item) => [{ value: item.label }, { value: item.value }]),
       ]
     : [
-        headerRow("DentalCare Manager", title),
+        headerRow("Dentista v1 Professional", title),
         [{ value: "Periodo", fontWeight: "bold" }, { value: `${dateFrom} a ${dateTo}` }],
         blankRow(),
         sectionRow("Insumos necesarios"),
@@ -317,7 +317,7 @@ async function buildPdf(data: ReportsSummary, rows: SummaryRow[], mode: ReportMo
 
   const drawHeader = () => {
     page.drawRectangle({ x: 0, y: 730, width: 612, height: 62, color: rgb(0.145, 0.388, 0.922) });
-    page.drawText("DentalCare Manager", { x: 42, y: 765, size: 18, font: bold, color: rgb(1, 1, 1) });
+    page.drawText("Dentista v1 Professional", { x: 42, y: 765, size: 18, font: bold, color: rgb(1, 1, 1) });
     page.drawText(`${title} - ${dateFrom} a ${dateTo}`, { x: 42, y: 742, size: 10, font, color: rgb(0.9, 0.95, 1) });
   };
   const newPageIfNeeded = (space = 60) => {

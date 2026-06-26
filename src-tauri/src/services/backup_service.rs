@@ -495,7 +495,7 @@ fn create_zip_archive(
     }
 
     let system_info = json!({
-        "product": "DentalCare Manager",
+        "product": "Dentista v1 Professional",
         "appVersion": env!("CARGO_PKG_VERSION"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,

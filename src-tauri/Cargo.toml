@@ -1,8 +1,8 @@
 [package]
 name = "dentalcare-manager"
 version = "0.1.0"
-description = "DentalCare Manager desktop application"
-authors = ["DentalCare Manager"]
+description = "Dentista v1 Professional desktop application"
+authors = ["Code Solution Studio"]
 edition = "2021"
 
 [lib]

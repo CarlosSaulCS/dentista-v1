@@ -49,6 +49,10 @@ backup.zip
 - `automatic`: creado al iniciar sesión si el último respaldo completado tiene más de 24 horas y el respaldo automático está activo.
 - `pre_restore`: creado automáticamente antes de preparar una restauración.
 
+Los respaldos manuales y la verificación de ZIP deben seguir disponibles en modo sólo lectura. La
+preparación de restauración requiere escritura porque reemplaza la base SQLite activa en el siguiente
+arranque.
+
 ## Historial
 
 La tabla `backups` guarda:

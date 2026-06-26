@@ -87,9 +87,9 @@ export function BackupsPage() {
 
   const pickRestoreFile = async () => {
     const selected = await openDialog({
-      title: "Seleccionar respaldo DentalCare",
+      title: "Seleccionar respaldo Dentista v1",
       multiple: false,
-      filters: [{ name: "DentalCare backup", extensions: ["zip"] }],
+      filters: [{ name: "Dentista v1 backup", extensions: ["zip"] }],
     });
     if (typeof selected === "string") {
       setSelectedRestorePath(selected);

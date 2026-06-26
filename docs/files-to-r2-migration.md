@@ -5,8 +5,10 @@
 Los archivos clínicos se almacenan localmente bajo el directorio de datos Tauri:
 
 ```text
-%APPDATA%/DentalCare Manager/files/
+appDataDir/files/
 ```
+
+En instalaciones antiguas, `appDataDir` puede conservar una carpeta con el nombre comercial anterior.
 
 La tabla `files` guarda metadatos como paciente, categoría, ruta, MIME, tamaño, hash y entidad relacionada.
 

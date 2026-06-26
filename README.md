@@ -1,4 +1,4 @@
-# DentalCare Manager
+# Dentista v1 Professional
 
 Sistema integral para consultorio dental construido como aplicación local-first de escritorio para Windows.
 
@@ -41,11 +41,11 @@ Después del build, los instaladores quedan en:
 
 ## Rutas De Datos
 
-La aplicación usa rutas administradas por Tauri:
+La aplicación usa rutas administradas por Tauri. En instalaciones nuevas quedan bajo el directorio de datos de Dentista v1 Professional; instalaciones heredadas pueden conservar carpetas con el nombre anterior para no romper compatibilidad.
 
-- Base SQLite: `%APPDATA%/DentalCare Manager/data/dentalcare.sqlite`
-- Archivos clínicos: `%APPDATA%/DentalCare Manager/files/`
-- Respaldos: `Documents/DentalCare Backups/`
+- Base SQLite: `appDataDir/data/dentalcare.sqlite`
+- Archivos clínicos: `appDataDir/files/`
+- Respaldos: `Documents/Dentista v1 Backups/`
 - Reportes exportados: directorio elegido por el usuario desde diálogo local
 
 ## Módulos

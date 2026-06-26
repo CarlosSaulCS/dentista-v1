@@ -295,17 +295,43 @@ fn license_message(status: &str, can_write: bool, reason: Option<&str>) -> Strin
     if can_write {
         return match status {
             "trial_active" => {
-                "Prueba local activa. El sistema opera completo en modo local.".to_string()
+                "Prueba local activa. Puedes trabajar sin internet con todas las funciones locales."
+                    .to_string()
             }
             "grace_period" => {
-                "Licencia en periodo de gracia. El sistema sigue habilitado temporalmente."
+                "Licencia en periodo de gracia. El sistema sigue habilitado temporalmente; regulariza la licencia para evitar modo sólo lectura."
                     .to_string()
             }
             "offline_grace" => {
-                "Validación remota pendiente. El sistema opera con gracia offline.".to_string()
+                "No se pudo validar en línea, pero tu gracia offline mantiene la operación completa."
+                    .to_string()
             }
-            _ => "Licencia activa para operación local.".to_string(),
+            "active" => "Licencia activa para operación local profesional.".to_string(),
+            _ => "Licencia habilitada para operación local.".to_string(),
         };
+    }
+
+    match status {
+        "expired" => {
+            return "La prueba o licencia terminó. El sistema queda en modo sólo lectura para proteger tus datos; puedes consultar, exportar y crear respaldos."
+                .to_string();
+        }
+        "past_due" => {
+            return "La licencia tiene pagos pendientes. El sistema queda en modo sólo lectura; puedes consultar, exportar y crear respaldos."
+                .to_string();
+        }
+        "suspended" => {
+            return "La licencia fue suspendida. El sistema queda en modo sólo lectura; puedes consultar, exportar y crear respaldos."
+                .to_string();
+        }
+        "read_only" => {
+            return "El sistema está en modo sólo lectura. Puedes consultar, exportar información y crear respaldos, pero no modificar datos."
+                .to_string();
+        }
+        "not_configured" => {
+            return "Licencia local pendiente de configuración inicial.".to_string();
+        }
+        _ => {}
     }
 
     match reason {

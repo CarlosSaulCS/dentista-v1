@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, CalendarPlus, ClipboardPlus, Edit, Mail, MessageCircle, Plus, Search, Trash2, WalletCards } from "lucide-react";
+import { Activity, CalendarPlus, ClipboardPlus, Edit, Files, FileText, Mail, MessageCircle, Plus, Search, Trash2, WalletCards } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/data/EmptyState";
@@ -159,7 +159,7 @@ export function PatientsPage() {
                 <TableHead>Contacto</TableHead>
                 <TableHead>Riesgos clínicos</TableHead>
                 <TableHead>Estado</TableHead>
-                <TableHead className="w-[700px]">Acciones rápidas</TableHead>
+                <TableHead className="w-[820px]">Acciones rápidas</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -206,6 +206,18 @@ export function PatientsPage() {
                           <Link to={`/payments?patientId=${patientParam}&new=1`}>
                             <WalletCards className="h-4 w-4" />
                             Pago
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline" size="sm">
+                          <Link to={`/files?patientId=${patientParam}`}>
+                            <Files className="h-4 w-4" />
+                            Archivos
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline" size="sm">
+                          <Link to={`/estimates?patientId=${patientParam}&new=1`}>
+                            <FileText className="h-4 w-4" />
+                            Presupuesto
                           </Link>
                         </Button>
                         {patient.whatsapp || patient.phone ? (
