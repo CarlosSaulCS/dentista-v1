@@ -50,7 +50,7 @@ export function SetupPage() {
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">DentalCare Manager</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Dentista v1 Professional</h1>
             <p className="mt-3 max-w-xl text-base text-muted-foreground">
               Inicializa el consultorio local, crea el administrador y deja la base segura para operar sin internet.
             </p>

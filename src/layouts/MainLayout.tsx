@@ -105,8 +105,8 @@ export function MainLayout() {
             </div>
             {!collapsed ? (
               <div className="min-w-0">
-                <div className="font-semibold leading-none">DentalCare</div>
-                <div className="text-xs text-muted-foreground">Manager</div>
+                <div className="font-semibold leading-none">Dentista v1</div>
+                <div className="text-xs text-muted-foreground">Professional</div>
               </div>
             ) : null}
           </div>
@@ -141,8 +141,8 @@ export function MainLayout() {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-16 items-center justify-between border-b bg-card px-4 sm:px-6">
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium">Sistema Integral para Consultorio Dental</div>
-              <div className="truncate text-xs text-muted-foreground">Local-first · SQLite · Operación sin internet</div>
+              <div className="truncate text-sm font-medium">Sistema dental profesional local-first</div>
+              <div className="truncate text-xs text-muted-foreground">Operación local · SQLite · Sin internet requerido</div>
             </div>
             <div className="flex items-center gap-3">
               <div className="hidden text-right sm:block">

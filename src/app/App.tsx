@@ -52,7 +52,7 @@ function AppBootstrap() {
     return (
       <div className="grid min-h-screen place-items-center bg-background p-6">
         <div className="max-w-lg rounded-lg border bg-card p-6 shadow-sm">
-          <h1 className="text-lg font-semibold">No se pudo iniciar DentalCare Manager</h1>
+          <h1 className="text-lg font-semibold">No se pudo iniciar Dentista v1 Professional</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {error instanceof Error ? error.message : String(error)}
           </p>

@@ -28,12 +28,12 @@ pub async fn init(app: &AppHandle) -> AppResult<AppState> {
         .path()
         .document_dir()
         .unwrap_or_else(|_| app_data_dir.clone())
-        .join("DentalCare Backups");
+        .join("Dentista v1 Backups");
     let reports_dir = app
         .path()
         .document_dir()
         .unwrap_or_else(|_| app_data_dir.clone())
-        .join("DentalCare Reports");
+        .join("Dentista v1 Reports");
 
     fs::create_dir_all(&data_dir)?;
     fs::create_dir_all(&files_dir)?;

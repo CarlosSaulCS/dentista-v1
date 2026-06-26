@@ -8,6 +8,7 @@ use crate::models::{
 };
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::guard::ensure_active_patient;
 use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc};
 
@@ -28,6 +29,15 @@ pub async fn create_clinical_record(
             "El paciente es obligatorio".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
+    ensure_optional_appointment_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.appointment_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
 
     let id = new_id();
     let now = now_utc();
@@ -44,9 +54,15 @@ pub async fn create_clinical_record(
     )
     .bind(&id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(&ctx.user_id)
-    .bind(input.appointment_id.as_deref())
+    .bind(
+        input
+            .appointment_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
     .bind(input.chief_complaint.as_deref().map(str::trim))
     .bind(input.current_condition.as_deref().map(str::trim))
     .bind(input.hereditary_history.as_deref().map(str::trim))
@@ -75,7 +91,7 @@ pub async fn create_clinical_record(
         "clinical_records",
         Some(&id),
         "clinical",
-        Some(json!({ "patientId": input.patient_id })),
+        Some(json!({ "patientId": patient_id })),
     )
     .await?;
 
@@ -99,6 +115,22 @@ pub async fn create_clinical_evolution(
             "Paciente y motivo son obligatorios".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
+    ensure_optional_clinical_record_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.clinical_record_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
+    ensure_optional_appointment_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.appointment_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
 
     let id = new_id();
     let now = now_utc();
@@ -114,9 +146,21 @@ pub async fn create_clinical_evolution(
     )
     .bind(&id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
-    .bind(input.clinical_record_id.as_deref())
-    .bind(input.appointment_id.as_deref())
+    .bind(&patient_id)
+    .bind(
+        input
+            .clinical_record_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
+    .bind(
+        input
+            .appointment_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
     .bind(&ctx.user_id)
     .bind(input.reason.trim())
     .bind(input.findings.as_deref().map(str::trim))
@@ -137,7 +181,7 @@ pub async fn create_clinical_evolution(
         "clinical_evolutions",
         Some(&id),
         "clinical",
-        Some(json!({ "patientId": input.patient_id })),
+        Some(json!({ "patientId": patient_id })),
     )
     .await?;
 
@@ -194,6 +238,73 @@ pub async fn list_clinical_evolutions(
     .await?;
 
     Ok(rows)
+}
+
+async fn ensure_optional_appointment_belongs_to_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    appointment_id: Option<&str>,
+    patient_id: &str,
+) -> AppResult<()> {
+    let Some(appointment_id) = appointment_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM appointments
+        WHERE clinic_id = ?
+          AND id = ?
+          AND patient_id = ?
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(clinic_id)
+    .bind(appointment_id)
+    .bind(patient_id)
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "La cita no pertenece al paciente seleccionado".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_optional_clinical_record_belongs_to_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    clinical_record_id: Option<&str>,
+    patient_id: &str,
+) -> AppResult<()> {
+    let Some(clinical_record_id) = clinical_record_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM clinical_records WHERE clinic_id = ? AND id = ? AND patient_id = ?",
+    )
+    .bind(clinic_id)
+    .bind(clinical_record_id)
+    .bind(patient_id)
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "La historia clínica no pertenece al paciente seleccionado".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn get_clinical_record_by_id(

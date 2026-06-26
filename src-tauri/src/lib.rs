@@ -135,5 +135,5 @@ pub fn run() {
             revoke_local_device
         ])
         .run(tauri::generate_context!())
-        .expect("error while running DentalCare Manager");
+        .expect("error while running Dentista v1 Professional");
 }

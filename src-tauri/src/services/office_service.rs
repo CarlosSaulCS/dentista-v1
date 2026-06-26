@@ -10,6 +10,7 @@ use crate::models::*;
 use crate::security::hash_password;
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::guard::{ensure_active_patient, ensure_optional_active_patient};
 use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, normalize_search, now_utc};
 
@@ -231,6 +232,13 @@ pub async fn create_treatment_plan(
             "Agrega al menos un tratamiento".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
+    validate_treatment_plan_items(&input.items)?;
+    for item in &input.items {
+        ensure_optional_treatment_catalog(db, &ctx.clinic_id, item.treatment_catalog_id.as_deref())
+            .await?;
+    }
 
     let subtotal: i64 = input
         .items
@@ -257,7 +265,7 @@ pub async fn create_treatment_plan(
     )
     .bind(&plan_id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(input.diagnosis.as_deref().map(str::trim))
     .bind(subtotal)
     .bind(discount)
@@ -288,6 +296,7 @@ pub async fn create_treatment_plan(
         .bind(
             item.treatment_catalog_id
                 .as_deref()
+                .map(str::trim)
                 .filter(|value| !value.is_empty()),
         )
         .bind(item.tooth_number.as_deref().map(str::trim))
@@ -314,7 +323,7 @@ pub async fn create_treatment_plan(
         "treatment_plans",
         Some(&plan_id),
         "info",
-        Some(json!({ "patientId": input.patient_id, "totalCents": total })),
+        Some(json!({ "patientId": patient_id, "totalCents": total })),
     )
     .await?;
     get_treatment_plan_by_id(db, &ctx.clinic_id, &plan_id).await
@@ -383,6 +392,20 @@ pub async fn create_estimate(
             "Paciente y conceptos son obligatorios".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
+    ensure_optional_treatment_plan_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.treatment_plan_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
+    validate_estimate_items(&input.items)?;
+    for item in &input.items {
+        ensure_optional_treatment_catalog(db, &ctx.clinic_id, item.treatment_catalog_id.as_deref())
+            .await?;
+    }
     let subtotal: i64 = input
         .items
         .iter()
@@ -410,11 +433,12 @@ pub async fn create_estimate(
     )
     .bind(&estimate_id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(
         input
             .treatment_plan_id
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(&folio)
@@ -422,6 +446,7 @@ pub async fn create_estimate(
         input
             .valid_until
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(subtotal)
@@ -453,6 +478,7 @@ pub async fn create_estimate(
         .bind(
             item.treatment_catalog_id
                 .as_deref()
+                .map(str::trim)
                 .filter(|value| !value.is_empty()),
         )
         .bind(item.description.trim())
@@ -491,26 +517,34 @@ pub async fn update_estimate_status(
         AccessIntent::DataWrite,
     )
     .await?;
+    ensure_valid_estimate_status(input.status.trim())?;
     let now = now_utc();
-    sqlx::query("UPDATE estimates SET status = ?, updated_at = ? WHERE clinic_id = ? AND id = ?")
-        .bind(&input.status)
-        .bind(&now)
-        .bind(&ctx.clinic_id)
-        .bind(&input.id)
-        .execute(db)
-        .await?;
+    let result = sqlx::query(
+        "UPDATE estimates SET status = ?, updated_at = ? WHERE clinic_id = ? AND id = ?",
+    )
+    .bind(input.status.trim())
+    .bind(&now)
+    .bind(&ctx.clinic_id)
+    .bind(input.id.trim())
+    .execute(db)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation(
+            "Presupuesto no encontrado".to_string(),
+        ));
+    }
     log_action(
         db,
         Some(&ctx.clinic_id),
         Some(&ctx.user_id),
         "estimates.status",
         "estimates",
-        Some(&input.id),
+        Some(input.id.trim()),
         "info",
-        Some(json!({ "status": input.status })),
+        Some(json!({ "status": input.status.trim() })),
     )
     .await?;
-    get_estimate_by_id(db, &ctx.clinic_id, &input.id).await
+    get_estimate_by_id(db, &ctx.clinic_id, input.id.trim()).await
 }
 
 pub async fn list_estimate_items(
@@ -582,6 +616,33 @@ pub async fn register_payment(
             "Paciente, concepto y monto son obligatorios".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_valid_payment_method(input.method.trim())?;
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
+    ensure_optional_estimate_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.estimate_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
+    ensure_optional_treatment_plan_item_belongs_to_patient(
+        db,
+        &ctx.clinic_id,
+        input.treatment_plan_item_id.as_deref(),
+        &patient_id,
+    )
+    .await?;
+    let estimate_id = input
+        .estimate_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let treatment_plan_item_id = input
+        .treatment_plan_item_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     let payment_id = new_id();
     let folio = next_folio(db, &ctx.clinic_id, "payment").await?;
@@ -597,7 +658,7 @@ pub async fn register_payment(
     )
     .bind(&payment_id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(&folio)
     .bind(input.concept.trim())
     .bind(input.amount_cents)
@@ -609,7 +670,7 @@ pub async fn register_payment(
     .execute(&mut *tx)
     .await?;
 
-    if input.estimate_id.is_some() || input.treatment_plan_item_id.is_some() {
+    if estimate_id.is_some() || treatment_plan_item_id.is_some() {
         sqlx::query(
             r#"
             INSERT INTO payment_allocations
@@ -620,8 +681,8 @@ pub async fn register_payment(
         .bind(new_id())
         .bind(&ctx.clinic_id)
         .bind(&payment_id)
-        .bind(input.treatment_plan_item_id.as_deref().filter(|value| !value.is_empty()))
-        .bind(input.estimate_id.as_deref().filter(|value| !value.is_empty()))
+        .bind(treatment_plan_item_id)
+        .bind(estimate_id)
         .bind(input.amount_cents)
         .bind(&now)
         .execute(&mut *tx)
@@ -803,7 +864,13 @@ pub async fn create_supplier(
     session_token: &str,
     input: CreateSupplierInput,
 ) -> AppResult<SupplierSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("inventory.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation(
             "El proveedor requiere nombre".to_string(),
@@ -854,7 +921,13 @@ pub async fn create_inventory_item(
     session_token: &str,
     input: CreateInventoryItemInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("inventory.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.name.trim().is_empty()
         || input.category.trim().is_empty()
         || input.unit.trim().is_empty()
@@ -877,6 +950,8 @@ pub async fn create_inventory_item(
         None,
     )
     .await?;
+    ensure_optional_supplier_belongs_to_clinic(db, &ctx.clinic_id, input.supplier_id.as_deref())
+        .await?;
     let id = new_id();
     let now = now_utc();
     sqlx::query(
@@ -893,6 +968,7 @@ pub async fn create_inventory_item(
         input
             .supplier_id
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(input.name.trim())
@@ -905,12 +981,14 @@ pub async fn create_inventory_item(
         input
             .purchase_date
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(
         input
             .expiration_date
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(input.location.as_deref().map(str::trim))
@@ -928,7 +1006,13 @@ pub async fn update_inventory_item(
     session_token: &str,
     input: UpdateInventoryItemInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("inventory.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un insumo para editar".to_string(),
@@ -956,6 +1040,8 @@ pub async fn update_inventory_item(
         Some(input.id.trim()),
     )
     .await?;
+    ensure_optional_supplier_belongs_to_clinic(db, &ctx.clinic_id, input.supplier_id.as_deref())
+        .await?;
 
     let now = now_utc();
     let result = sqlx::query(
@@ -971,6 +1057,7 @@ pub async fn update_inventory_item(
         input
             .supplier_id
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(input.name.trim())
@@ -983,12 +1070,14 @@ pub async fn update_inventory_item(
         input
             .purchase_date
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(
         input
             .expiration_date
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(input.location.as_deref().map(str::trim))
@@ -1023,7 +1112,13 @@ pub async fn soft_delete_inventory_item(
     session_token: &str,
     inventory_item_id: &str,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("inventory.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if inventory_item_id.trim().is_empty() {
         return Err(AppError::Validation(
             "Selecciona un insumo para dar de baja".to_string(),
@@ -1066,7 +1161,13 @@ pub async fn create_inventory_movement(
     session_token: &str,
     input: CreateInventoryMovementInput,
 ) -> AppResult<InventoryItemSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("inventory.manage"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.inventory_item_id.trim().is_empty() || input.quantity <= 0.0 {
         return Err(AppError::Validation(
             "Insumo y cantidad son obligatorios".to_string(),
@@ -1151,6 +1252,7 @@ pub async fn create_alert(
             "Título y mensaje son obligatorios".to_string(),
         ));
     }
+    ensure_optional_active_patient(db, &ctx.clinic_id, input.patient_id.as_deref()).await?;
     let id = new_id();
     let now = now_utc();
     sqlx::query(
@@ -1158,12 +1260,24 @@ pub async fn create_alert(
     )
     .bind(&id)
     .bind(&ctx.clinic_id)
-    .bind(input.patient_id.as_deref().filter(|value| !value.is_empty()))
+    .bind(
+        input
+            .patient_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
     .bind(input.alert_type.trim())
     .bind(input.priority.trim())
     .bind(input.title.trim())
     .bind(input.message.trim())
-    .bind(input.due_at.as_deref().filter(|value| !value.is_empty()))
+    .bind(
+        input
+            .due_at
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
     .bind(&now)
     .execute(db)
     .await?;
@@ -1202,7 +1316,7 @@ pub async fn save_patient_file(
     let required_permission = if input.related_entity_type.as_deref() == Some("payments") {
         Some("payments.create")
     } else {
-        Some("patients.edit")
+        Some("files.manage")
     };
     let ctx = validate_session_for_intent(
         &state.db,
@@ -1229,16 +1343,19 @@ pub async fn save_patient_file(
             "Tipo de archivo clínico no permitido".to_string(),
         ));
     }
-    let category_id = ensure_file_category(&state.db, &input.category_name).await?;
+    let patient_id = input.patient_id.trim().to_string();
+    let category_name = input.category_name.trim();
+    ensure_active_patient(&state.db, &ctx.clinic_id, &patient_id).await?;
+    let category_id = ensure_file_category(&state.db, category_name).await?;
     let file_id = new_id();
     let safe_name = sanitize_filename::sanitize(&input.original_name);
     let stored_name = format!("{}-{}", file_id, safe_name);
-    let category_dir = sanitize_filename::sanitize(&input.category_name);
-    let patient_dir = state.files_dir.join(&input.patient_id).join(&category_dir);
+    let category_dir = sanitize_filename::sanitize(category_name);
+    let patient_dir = state.files_dir.join(&patient_id).join(&category_dir);
     fs::create_dir_all(&patient_dir)?;
     let absolute_path = patient_dir.join(&stored_name);
     fs::write(&absolute_path, &input.bytes)?;
-    let relative_path = PathBuf::from(&input.patient_id)
+    let relative_path = PathBuf::from(&patient_id)
         .join(&category_dir)
         .join(&stored_name)
         .to_string_lossy()
@@ -1262,7 +1379,7 @@ pub async fn save_patient_file(
     )
     .bind(&file_id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(&category_id)
     .bind(&file_type)
     .bind(input.original_name.trim())
@@ -1299,8 +1416,8 @@ pub async fn save_patient_file(
         Some(&file_id),
         "info",
         Some(json!({
-            "patientId": input.patient_id,
-            "category": input.category_name,
+            "patientId": patient_id,
+            "category": category_name,
             "relatedEntityType": input.related_entity_type,
             "relatedEntityId": input.related_entity_id,
             "sizeBytes": input.bytes.len()
@@ -1412,24 +1529,102 @@ pub async fn open_external_url(db: &SqlitePool, session_token: &str, url: &str) 
 }
 
 fn is_allowed_external_url(url: &str) -> bool {
-    if url.is_empty()
-        || url.contains(char::is_whitespace)
-        || url.contains('\\')
-        || url.contains('%')
+    if url.is_empty() || url.len() > 4096 || url.contains(char::is_whitespace) || url.contains('\\')
     {
         return false;
     }
-    if let Some(address) = url.strip_prefix("mailto:") {
-        return address.contains('@') && !address.contains('/') && !address.contains(':');
+    if let Some(value) = url.strip_prefix("mailto:") {
+        let (address, query) = value.split_once('?').unwrap_or((value, ""));
+        let address_ok = address.contains('@')
+            && !address.contains('/')
+            && !address.contains(':')
+            && address
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '+' | '-' | '@'));
+        return address_ok && is_safe_url_query(query, &["subject", "body"]);
     }
     if let Some(value) = url.strip_prefix("https://wa.me/") {
-        return value
-            .split('?')
-            .next()
-            .map(|phone| phone.chars().all(|ch| ch.is_ascii_digit()) && phone.len() >= 8)
-            .unwrap_or(false);
+        let (phone, query) = value.split_once('?').unwrap_or((value, ""));
+        let phone_ok =
+            phone.chars().all(|ch| ch.is_ascii_digit()) && (8..=15).contains(&phone.len());
+        return phone_ok && is_safe_url_query(query, &["text"]);
     }
     false
+}
+
+fn is_safe_url_query(query: &str, allowed_keys: &[&str]) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    if query.len() > 2048 {
+        return false;
+    }
+
+    query.split('&').all(|pair| {
+        let Some((key, value)) = pair.split_once('=') else {
+            return false;
+        };
+        allowed_keys.contains(&key) && is_safe_query_component(value)
+    })
+}
+
+fn is_safe_query_component(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                if index + 2 >= bytes.len()
+                    || !bytes[index + 1].is_ascii_hexdigit()
+                    || !bytes[index + 2].is_ascii_hexdigit()
+                {
+                    return false;
+                }
+                index += 3;
+            }
+            byte => {
+                let ch = byte as char;
+                if ch.is_ascii_alphanumeric()
+                    || matches!(ch, '-' | '_' | '.' | '~' | '!' | '*' | '\'' | '(' | ')')
+                {
+                    index += 1;
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_external_url;
+
+    #[test]
+    fn allows_encoded_whatsapp_and_mailto_reminders() {
+        assert!(is_allowed_external_url(
+            "https://wa.me/5215512345678?text=Hola%20Paciente%2C%20tu%20cita"
+        ));
+        assert!(is_allowed_external_url(
+            "mailto:paciente@example.com?subject=Recordatorio%20de%20cita&body=Hola%20Paciente"
+        ));
+    }
+
+    #[test]
+    fn rejects_external_url_abuse_cases() {
+        assert!(!is_allowed_external_url("https://evil.example/?text=hola"));
+        assert!(!is_allowed_external_url("mailto:paciente@example.com/evil"));
+        assert!(!is_allowed_external_url("https://wa.me/52155ABC?text=hola"));
+        assert!(!is_allowed_external_url(
+            "https://wa.me/5215512345678?text=%ZZ"
+        ));
+        assert!(!is_allowed_external_url(
+            "mailto:paciente@example.com?bcc=otro@example.com"
+        ));
+    }
 }
 
 pub async fn list_consent_templates(
@@ -1451,7 +1646,13 @@ pub async fn create_consent_template(
     session_token: &str,
     input: CreateConsentTemplateInput,
 ) -> AppResult<ConsentTemplateSummary> {
-    let ctx = validate_session_for_intent(db, session_token, None, AccessIntent::DataWrite).await?;
+    let ctx = validate_session_for_intent(
+        db,
+        session_token,
+        Some("clinical.edit"),
+        AccessIntent::DataWrite,
+    )
+    .await?;
     if input.name.trim().is_empty() || input.body.trim().is_empty() {
         return Err(AppError::Validation(
             "Nombre y cuerpo son obligatorios".to_string(),
@@ -1774,6 +1975,7 @@ pub async fn create_user(
             "Nombre, usuario y rol son obligatorios".to_string(),
         ));
     }
+    ensure_role_belongs_to_clinic(db, &ctx.clinic_id, &input.role_id).await?;
     let id = new_id();
     let now = now_utc();
     let password_hash = hash_password(&input.password)?;
@@ -1849,6 +2051,7 @@ pub async fn create_periodontal_record(
     if input.patient_id.trim().is_empty() {
         return Err(AppError::Validation("Selecciona un paciente".to_string()));
     }
+    ensure_active_patient(db, &ctx.clinic_id, &input.patient_id).await?;
     let id = new_id();
     let now = now_utc();
     sqlx::query(
@@ -2383,6 +2586,251 @@ async fn ensure_unique_inventory_item(
         return Err(AppError::Validation(
             "Ya existe un insumo activo con el mismo nombre, categoría y unidad".to_string(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_treatment_plan_items(items: &[TreatmentPlanItemInput]) -> AppResult<()> {
+    for item in items {
+        validate_positive_line_amounts(
+            item.quantity,
+            item.unit_price_cents,
+            item.discount_cents,
+            "Los tratamientos deben tener cantidad positiva e importes válidos",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_estimate_items(items: &[EstimateItemInput]) -> AppResult<()> {
+    for item in items {
+        if item.description.trim().is_empty() {
+            return Err(AppError::Validation(
+                "Cada concepto del presupuesto requiere descripción".to_string(),
+            ));
+        }
+        validate_positive_line_amounts(
+            item.quantity,
+            item.unit_price_cents,
+            item.discount_cents,
+            "Los conceptos deben tener cantidad positiva e importes válidos",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_positive_line_amounts(
+    quantity: i64,
+    unit_price_cents: i64,
+    discount_cents: i64,
+    message: &str,
+) -> AppResult<()> {
+    if quantity <= 0 || unit_price_cents < 0 || discount_cents < 0 {
+        return Err(AppError::Validation(message.to_string()));
+    }
+    let subtotal = quantity.checked_mul(unit_price_cents).ok_or_else(|| {
+        AppError::Validation("El importe del concepto excede el límite permitido".to_string())
+    })?;
+    if discount_cents > subtotal {
+        return Err(AppError::Validation(
+            "El descuento no puede exceder el subtotal".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_valid_estimate_status(status: &str) -> AppResult<()> {
+    if matches!(
+        status,
+        "draft" | "delivered" | "approved" | "rejected" | "expired" | "cancelled"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::Validation(
+            "Estado de presupuesto no soportado".to_string(),
+        ))
+    }
+}
+
+fn ensure_valid_payment_method(method: &str) -> AppResult<()> {
+    if matches!(
+        method,
+        "efectivo" | "transferencia" | "tarjeta" | "mixto" | "otro"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::Validation(
+            "Método de pago no soportado".to_string(),
+        ))
+    }
+}
+
+async fn ensure_optional_treatment_catalog(
+    db: &SqlitePool,
+    clinic_id: &str,
+    treatment_catalog_id: Option<&str>,
+) -> AppResult<()> {
+    let Some(treatment_catalog_id) = treatment_catalog_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM treatment_catalog
+        WHERE id = ?
+          AND active = 1
+          AND (clinic_id = ? OR clinic_id IS NULL)
+        "#,
+    )
+    .bind(treatment_catalog_id)
+    .bind(clinic_id)
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "Tratamiento del catálogo no encontrado".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_optional_treatment_plan_belongs_to_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    treatment_plan_id: Option<&str>,
+    patient_id: &str,
+) -> AppResult<()> {
+    let Some(treatment_plan_id) = treatment_plan_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM treatment_plans WHERE clinic_id = ? AND id = ? AND patient_id = ?",
+    )
+    .bind(clinic_id)
+    .bind(treatment_plan_id)
+    .bind(patient_id.trim())
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "El plan de tratamiento no pertenece al paciente seleccionado".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_optional_estimate_belongs_to_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    estimate_id: Option<&str>,
+    patient_id: &str,
+) -> AppResult<()> {
+    let Some(estimate_id) = estimate_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM estimates WHERE clinic_id = ? AND id = ? AND patient_id = ?",
+    )
+    .bind(clinic_id)
+    .bind(estimate_id)
+    .bind(patient_id.trim())
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "El presupuesto no pertenece al paciente seleccionado".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_optional_treatment_plan_item_belongs_to_patient(
+    db: &SqlitePool,
+    clinic_id: &str,
+    treatment_plan_item_id: Option<&str>,
+    patient_id: &str,
+) -> AppResult<()> {
+    let Some(treatment_plan_item_id) = treatment_plan_item_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM treatment_plan_items tpi
+        JOIN treatment_plans tp ON tp.id = tpi.treatment_plan_id
+        WHERE tpi.clinic_id = ?
+          AND tpi.id = ?
+          AND tp.clinic_id = tpi.clinic_id
+          AND tp.patient_id = ?
+        "#,
+    )
+    .bind(clinic_id)
+    .bind(treatment_plan_item_id)
+    .bind(patient_id.trim())
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation(
+            "El tratamiento abonado no pertenece al paciente seleccionado".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_optional_supplier_belongs_to_clinic(
+    db: &SqlitePool,
+    clinic_id: &str,
+    supplier_id: Option<&str>,
+) -> AppResult<()> {
+    let Some(supplier_id) = supplier_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM suppliers WHERE clinic_id = ? AND id = ? AND active = 1",
+    )
+    .bind(clinic_id)
+    .bind(supplier_id)
+    .fetch_one(db)
+    .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation("Proveedor no encontrado".to_string()));
+    }
+    Ok(())
+}
+
+async fn ensure_role_belongs_to_clinic(
+    db: &SqlitePool,
+    clinic_id: &str,
+    role_id: &str,
+) -> AppResult<()> {
+    let exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE clinic_id = ? AND id = ?")
+            .bind(clinic_id)
+            .bind(role_id.trim())
+            .fetch_one(db)
+            .await?;
+
+    if exists == 0 {
+        return Err(AppError::Validation("Rol no encontrado".to_string()));
     }
     Ok(())
 }

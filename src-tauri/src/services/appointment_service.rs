@@ -10,6 +10,7 @@ use crate::models::{
 };
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::guard::ensure_active_patient;
 use crate::services::license_service::AccessIntent;
 use crate::services::sync_service;
 use crate::utils::{new_id, now_utc, today_prefix};
@@ -36,6 +37,8 @@ pub async fn create_appointment(
             "La duración debe estar entre 5 y 480 minutos".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
 
     let starts = parse_local_datetime(&input.starts_at)?;
     let ends = starts + Duration::minutes(input.duration_minutes);
@@ -45,10 +48,11 @@ pub async fn create_appointment(
         db,
         &ctx.clinic_id,
         None,
-        &input.patient_id,
+        &patient_id,
         input
             .dentist_user_id
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
         &starts_at,
         &ends_at,
@@ -67,11 +71,12 @@ pub async fn create_appointment(
     )
     .bind(&id)
     .bind(&ctx.clinic_id)
-    .bind(&input.patient_id)
+    .bind(&patient_id)
     .bind(
         input
             .dentist_user_id
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty()),
     )
     .bind(&starts_at)
@@ -105,7 +110,7 @@ pub async fn create_appointment(
         "appointments",
         Some(&id),
         "info",
-        Some(json!({ "patientId": input.patient_id, "startsAt": starts_at })),
+        Some(json!({ "patientId": patient_id, "startsAt": starts_at })),
     )
     .await?;
 
@@ -227,7 +232,10 @@ pub async fn update_appointment(
             "La duración debe estar entre 5 y 480 minutos".to_string(),
         ));
     }
-    ensure_valid_appointment_status(input.status.trim())?;
+    let status = input.status.trim().to_string();
+    ensure_valid_appointment_status(&status)?;
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
 
     let previous_status: String = sqlx::query_scalar(
         "SELECT status FROM appointments WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL",
@@ -244,12 +252,13 @@ pub async fn update_appointment(
     let dentist_user_id = input
         .dentist_user_id
         .as_deref()
+        .map(str::trim)
         .filter(|value| !value.is_empty());
     ensure_no_conflicting_appointment(
         db,
         &ctx.clinic_id,
         Some(input.id.trim()),
-        &input.patient_id,
+        &patient_id,
         dentist_user_id,
         &starts_at,
         &ends_at,
@@ -266,17 +275,17 @@ pub async fn update_appointment(
         WHERE clinic_id = ? AND id = ? AND deleted_at IS NULL
         "#,
     )
-    .bind(input.patient_id.trim())
+    .bind(&patient_id)
     .bind(dentist_user_id)
     .bind(&starts_at)
     .bind(&ends_at)
     .bind(input.duration_minutes)
     .bind(input.reason.trim())
     .bind(input.appointment_type.trim())
-    .bind(input.status.trim())
+    .bind(&status)
     .bind(input.notes.as_deref().map(str::trim))
     .bind(&now)
-    .bind(input.status.trim())
+    .bind(&status)
     .bind(&now)
     .bind(&ctx.clinic_id)
     .bind(input.id.trim())
@@ -288,13 +297,13 @@ pub async fn update_appointment(
         &ctx.clinic_id,
         input.id.trim(),
         Some(&ctx.user_id),
-        if previous_status == input.status {
+        if previous_status == status {
             "updated"
         } else {
             "status_changed"
         },
         Some(&previous_status),
-        Some(input.status.trim()),
+        Some(&status),
         input.notes.as_deref(),
     )
     .await?;
@@ -306,9 +315,7 @@ pub async fn update_appointment(
         "appointments",
         Some(input.id.trim()),
         "info",
-        Some(
-            json!({ "patientId": input.patient_id, "startsAt": starts_at, "status": input.status }),
-        ),
+        Some(json!({ "patientId": patient_id, "startsAt": starts_at, "status": status })),
     )
     .await?;
 

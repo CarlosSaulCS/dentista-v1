@@ -42,7 +42,7 @@ export function LoginPage({ license }: { license?: LicenseStatus }) {
             <LockKeyhole className="h-5 w-5" />
           </div>
           <div>
-            <CardTitle>DentalCare Manager</CardTitle>
+            <CardTitle>Dentista v1 Professional</CardTitle>
             <CardDescription>
               {locked ? "Sesión bloqueada por inactividad" : licenseDescription(license)}
             </CardDescription>
@@ -74,11 +74,11 @@ export function LoginPage({ license }: { license?: LicenseStatus }) {
 }
 
 function licenseDescription(license?: LicenseStatus) {
-  if (!license) return "Sistema Integral para Consultorio Dental";
+  if (!license) return "Sistema dental profesional local-first";
   if (!license.canWrite) return "Modo sólo lectura disponible";
   if (license.status === "active" || license.isLicensed) return "Sistema activado para operación completa";
   if (license.isTrialActive) {
     return `Prueba activa: ${license.daysRemaining} día${license.daysRemaining === 1 ? "" : "s"} restante${license.daysRemaining === 1 ? "" : "s"}`;
   }
-  return "Sistema Integral para Consultorio Dental";
+  return "Sistema dental profesional local-first";
 }

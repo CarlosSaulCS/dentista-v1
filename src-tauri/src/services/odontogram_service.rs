@@ -5,6 +5,7 @@ use crate::errors::{AppError, AppResult};
 use crate::models::{OdontogramEntry, OdontogramRecordView, UpsertOdontogramEntryInput};
 use crate::services::audit_service::log_action;
 use crate::services::auth_service::{validate_session, validate_session_for_intent};
+use crate::services::guard::ensure_active_patient;
 use crate::services::license_service::AccessIntent;
 use crate::utils::{new_id, now_utc};
 
@@ -15,6 +16,8 @@ pub async fn get_odontogram(
     dentition_type: &str,
 ) -> AppResult<OdontogramRecordView> {
     let ctx = validate_session(db, session_token, Some("odontogram.view")).await?;
+    let patient_id = patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
     let record_id = sqlx::query_scalar::<_, String>(
         r#"
         SELECT id FROM odontogram_records
@@ -23,7 +26,7 @@ pub async fn get_odontogram(
         "#,
     )
     .bind(&ctx.clinic_id)
-    .bind(patient_id)
+    .bind(&patient_id)
     .bind(dentition_type)
     .fetch_optional(db)
     .await?;
@@ -31,7 +34,7 @@ pub async fn get_odontogram(
     let Some(record_id) = record_id else {
         return Ok(OdontogramRecordView {
             id: String::new(),
-            patient_id: patient_id.to_string(),
+            patient_id,
             dentition_type: dentition_type.to_string(),
             entries: Vec::new(),
         });
@@ -52,7 +55,7 @@ pub async fn get_odontogram(
 
     Ok(OdontogramRecordView {
         id: record_id,
-        patient_id: patient_id.to_string(),
+        patient_id,
         dentition_type: dentition_type.to_string(),
         entries,
     })
@@ -78,9 +81,10 @@ pub async fn upsert_odontogram_entry(
             "Paciente, pieza y estado son obligatorios".to_string(),
         ));
     }
+    let patient_id = input.patient_id.trim().to_string();
+    ensure_active_patient(db, &ctx.clinic_id, &patient_id).await?;
 
-    let record_id =
-        ensure_record(db, &ctx.clinic_id, &input.patient_id, &input.dentition_type).await?;
+    let record_id = ensure_record(db, &ctx.clinic_id, &patient_id, &input.dentition_type).await?;
     let surface = input.surface.clone().unwrap_or_else(|| "all".to_string());
     let now = now_utc();
 
@@ -181,7 +185,7 @@ pub async fn upsert_odontogram_entry(
         Some(&entry_id),
         "clinical",
         Some(json!({
-            "patientId": input.patient_id,
+            "patientId": &patient_id,
             "tooth": input.tooth_number,
             "surface": surface,
             "state": input.state
@@ -189,7 +193,7 @@ pub async fn upsert_odontogram_entry(
     )
     .await?;
 
-    get_odontogram(db, session_token, &input.patient_id, &input.dentition_type).await
+    get_odontogram(db, session_token, &patient_id, &input.dentition_type).await
 }
 
 async fn ensure_record(

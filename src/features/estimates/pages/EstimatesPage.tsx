@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { FileDown, Plus } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/data/PageHeader";
 import { StatusBadge } from "@/components/data/StatusBadge";
@@ -23,11 +24,23 @@ const emptyEstimateDraft = { patientId: "", description: "", quantity: "1", pric
 export function EstimatesPage() {
   const sessionToken = useAuthStore((state) => state.sessionToken) ?? "";
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const patientIdParam = searchParams.get("patientId") ?? "";
+  const newEstimateRequested = searchParams.get("new") === "1";
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(emptyEstimateDraft);
+  const [draft, setDraft] = useState(() => ({ ...emptyEstimateDraft, patientId: patientIdParam }));
   const [exportingEstimateId, setExportingEstimateId] = useState<string | null>(null);
+  const sheetOpen = open || newEstimateRequested;
   const estimates = useQuery({ queryKey: ["estimates", sessionToken], queryFn: () => officeApi.listEstimates(sessionToken), enabled: Boolean(sessionToken) });
   const patients = useQuery({ queryKey: ["patients", sessionToken, "estimates"], queryFn: () => listPatients(sessionToken, "", 200), enabled: Boolean(sessionToken) });
+
+  const clearNewEstimateRequest = () => {
+    if (!newEstimateRequested) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("new");
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const mutation = useMutation({
     mutationFn: () => officeApi.createEstimate(sessionToken, {
       patientId: draft.patientId,
@@ -39,6 +52,7 @@ export function EstimatesPage() {
     onSuccess: async () => {
       toast.success("Presupuesto generado");
       setOpen(false);
+      clearNewEstimateRequest();
       setDraft(emptyEstimateDraft);
       await queryClient.invalidateQueries({ queryKey: ["estimates"] });
       await queryClient.invalidateQueries({ queryKey: ["reports"] });
@@ -115,7 +129,10 @@ export function EstimatesPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Presupuestos" description="Cotizaciones con folio, estado, vigencia y exportación local." actions={
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={sheetOpen} onOpenChange={(value) => {
+        setOpen(value);
+        if (!value) clearNewEstimateRequest();
+      }}>
         <SheetTrigger asChild><Button><Plus className="h-4 w-4" />Nuevo</Button></SheetTrigger>
         <SheetContent>
           <SheetHeader><SheetTitle>Nuevo presupuesto</SheetTitle></SheetHeader>
@@ -151,7 +168,7 @@ export function EstimatesPage() {
 function buildEstimateCsv(estimate: EstimateSummary, items: Awaited<ReturnType<typeof officeApi.listEstimateItems>>) {
   const delimiter = ";";
   const rows = [
-    ["DentalCare Manager - Presupuesto"],
+    ["Dentista v1 Professional - Presupuesto"],
     [],
     ["Informacion del presupuesto"],
     ["Campo", "Valor"],
